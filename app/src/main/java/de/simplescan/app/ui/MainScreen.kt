@@ -14,6 +14,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -193,15 +196,24 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                             selection = emptyList()
                         }) { Icon(Icons.Outlined.Share, contentDescription = "Ausgewählte teilen") }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = StageGreen,
+                        titleContentColor = Color.White,
+                        navigationIconContentColor = Color.White,
+                        actionIconContentColor = Color.White,
+                    ),
                 )
+            } else {
+                // Fester Kopf (scrollt nicht mit): Logo, Schriftzug und Unterzeile auf Grün.
+                Stage()
             }
-            // Ohne Auswahl gibt es keine Leiste: Logo und Schriftzug stehen groß oben in der Liste (Bühne).
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!selecting) ExtendedFloatingActionButton(
                 onClick = { startScan(context, scanLauncher, vm) },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
                 text = { Text("Scannen") },
             )
@@ -212,8 +224,6 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item { Stage() }
-
             item {
                 Card(
                     onClick = { showTargetDialog = true },
@@ -321,17 +331,17 @@ private fun Stage() {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp)
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
             .background(StageGreen)
-            .padding(top = 12.dp, bottom = 22.dp),
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(top = 4.dp, bottom = 18.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         // Das Vordergrund-Motiv des App-Icons (Blatt mit Scan-Ecken), ohne Hintergrund.
         Image(
             painter = painterResource(R.drawable.ic_launcher_foreground),
             contentDescription = null,
-            modifier = Modifier.size(112.dp),
+            modifier = Modifier.size(96.dp),
         )
         Text(
             "Simplescan",
