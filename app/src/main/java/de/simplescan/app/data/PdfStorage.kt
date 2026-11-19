@@ -20,6 +20,7 @@ class PdfStorage(private val context: Context) {
         when (target) {
             Target.Downloads -> saveToDownloads(source, baseName)
             is Target.Folder -> saveToFolder(source, baseName, target)
+            is Target.WebDav -> throw StorageException("WebDAV läuft über WebDavClient.")
         }
     }
 

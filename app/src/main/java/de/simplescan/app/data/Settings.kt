@@ -5,6 +5,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
 import org.json.JSONObject
@@ -20,6 +21,16 @@ sealed interface Target {
     }
 
     data class Folder(val treeUri: String, override val label: String) : Target
+
+    /** Nextcloud oder anderer WebDAV-Server. Das Passwort liegt verschlüsselt extra (siehe SecretBox). */
+    data class WebDav(
+        val kind: DavKind,
+        val server: String,
+        val user: String,
+        val folder: String,
+    ) : Target {
+        override val label: String get() = WebDavPaths.label(kind, server, folder)
+    }
 }
 
 /** Ein bereits gespeichertes PDF für die Liste „Zuletzt gespeichert“. */
@@ -71,15 +82,33 @@ class SettingsStore(private val context: Context) {
     private val keyTreeUri = stringPreferencesKey("tree_uri")
     private val keyTreeLabel = stringPreferencesKey("tree_label")
     private val keyRecent = stringPreferencesKey("recent")
+    private val keyDavKind = stringPreferencesKey("dav_kind")
+    private val keyDavServer = stringPreferencesKey("dav_server")
+    private val keyDavUser = stringPreferencesKey("dav_user")
+    private val keyDavFolder = stringPreferencesKey("dav_folder")
+    private val keyDavPassword = stringPreferencesKey("dav_password")
 
     val target: Flow<Target> = context.dataStore.data.map { p ->
         val uri = p[keyTreeUri]
-        if (p[keyTarget] == "folder" && !uri.isNullOrBlank()) {
-            Target.Folder(uri, p[keyTreeLabel] ?: "Gewählter Ordner")
-        } else {
-            Target.Downloads
+        when {
+            p[keyTarget] == "folder" && !uri.isNullOrBlank() -> Target.Folder(uri, p[keyTreeLabel] ?: "Gewählter Ordner")
+            p[keyTarget] == "webdav" && davFrom(p) != null -> davFrom(p)!!
+            else -> Target.Downloads
         }
     }
+
+    /** Zuletzt eingetragene WebDAV-Daten (auch wenn gerade ein anderes Ziel aktiv ist), zum Vorbefüllen. */
+    val lastWebDav: Flow<Target.WebDav?> = context.dataStore.data.map { davFrom(it) }
+
+    private fun davFrom(p: androidx.datastore.preferences.core.Preferences): Target.WebDav? {
+        val server = p[keyDavServer]
+        val user = p[keyDavUser]
+        if (server.isNullOrBlank() || user.isNullOrBlank()) return null
+        val kind = runCatching { DavKind.valueOf(p[keyDavKind] ?: "") }.getOrDefault(DavKind.NEXTCLOUD)
+        return Target.WebDav(kind, server, user, p[keyDavFolder] ?: "")
+    }
+
+    suspend fun webDavPassword(): String? = SecretBox.decrypt(context.dataStore.data.first()[keyDavPassword])
 
     val recent: Flow<List<SavedScan>> = context.dataStore.data.map { ScanListCodec.decode(it[keyRecent]) }
 
@@ -92,7 +121,21 @@ class SettingsStore(private val context: Context) {
                     p[keyTreeUri] = target.treeUri
                     p[keyTreeLabel] = target.label
                 }
+                is Target.WebDav -> p[keyTarget] = "webdav"
             }
+        }
+    }
+
+    /** Speichert die WebDAV-Daten und macht sie zum aktiven Ziel. */
+    suspend fun setWebDav(target: Target.WebDav, password: String) {
+        val encrypted = SecretBox.encrypt(password)
+        context.dataStore.edit { p ->
+            p[keyDavKind] = target.kind.name
+            p[keyDavServer] = target.server
+            p[keyDavUser] = target.user
+            p[keyDavFolder] = target.folder
+            p[keyDavPassword] = encrypted
+            p[keyTarget] = "webdav"
         }
     }
 

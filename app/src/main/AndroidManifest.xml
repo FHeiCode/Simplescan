@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Keine Berechtigungen nötig: Kamera läuft im Scanner der Google-Play-Dienste,
-         gespeichert wird über MediaStore (Download) bzw. den Ordnerauswahl-Dialog. -->
+    <!-- Kamera läuft im Scanner der Google-Play-Dienste, lokal gespeichert wird über MediaStore
+         (Download) bzw. den Ordnerauswahl-Dialog. Internet nur für Nextcloud/WebDAV. -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <application
         android:allowBackup="false"
