@@ -45,6 +45,19 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     val recent: StateFlow<List<SavedScan>> = settings.recent
         .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
+    val defaultEmail: StateFlow<String> = settings.defaultEmail
+        .stateIn(viewModelScope, SharingStarted.Eagerly, "")
+
+    /** Speichert die festen Empfänger. Gibt eine Fehlermeldung zurück oder null, wenn alles gültig war. */
+    fun saveDefaultEmail(input: String): String? {
+        de.simplescan.app.data.EmailList.firstInvalid(input)?.let { return "„$it“ ist keine gültige E-Mail-Adresse." }
+        viewModelScope.launch {
+            settings.setDefaultEmail(input)
+            show(if (input.isBlank()) "Keine feste Empfänger-Adresse mehr" else "Empfänger gespeichert")
+        }
+        return null
+    }
+
     val lastWebDav: StateFlow<Target.WebDav?> = settings.lastWebDav
         .stateIn(viewModelScope, SharingStarted.Eagerly, null)
 

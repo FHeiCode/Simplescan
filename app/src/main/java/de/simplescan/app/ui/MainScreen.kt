@@ -142,6 +142,8 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     }
 
     var showTargetDialog by remember { mutableStateOf(false) }
+    var showEmailDialog by remember { mutableStateOf(false) }
+    val defaultEmail by vm.defaultEmail.collectAsStateWithLifecycle()
 
     // Mehrfachauswahl: Adressen der ausgewählten Einträge. Leer = normale Ansicht.
     var selection by rememberSaveable { mutableStateOf(listOf<String>()) }
@@ -245,6 +247,31 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
             }
 
             item {
+                Card(
+                    onClick = { showEmailDialog = true },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Email, contentDescription = null)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("E-Mail an", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                defaultEmail.ifBlank { "Keine feste Adresse" },
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (defaultEmail.isBlank()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TextButton(onClick = { showEmailDialog = true }) { Text(if (defaultEmail.isBlank()) "Festlegen" else "Ändern") }
+                    }
+                }
+            }
+
+            item {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
                     "Zuletzt gespeichert",
@@ -314,6 +341,14 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
             },
             onWebDav = { showTargetDialog = false; vm.clearDavError(); showWebDavDialog = true },
             onDismiss = { showTargetDialog = false },
+        )
+    }
+
+    if (showEmailDialog) {
+        EmailDialog(
+            initial = defaultEmail,
+            onSave = { input -> vm.saveDefaultEmail(input).also { if (it == null) showEmailDialog = false } },
+            onDismiss = { showEmailDialog = false },
         )
     }
 
@@ -629,5 +664,42 @@ private fun WebDavDialog(
             }
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Abbrechen") } },
+    )
+}
+
+private fun errorText(error: String?): (@Composable () -> Unit)? =
+    if (error == null) null else { { Text(error) } }
+
+/** Feste Empfänger-Adresse(n) für den E-Mail-Versand festlegen; leer lassen = keine. */
+@Composable
+private fun EmailDialog(initial: String, onSave: (String) -> String?, onDismiss: () -> Unit) {
+    var input by rememberSaveable { mutableStateOf(initial) }
+    var error by remember { mutableStateOf<String?>(null) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("E-Mail an") },
+        text = {
+            Column {
+                Text(
+                    "Diese Adresse steht beim Versenden gleich im Feld „An“. Mehrere mit Komma trennen, leer lassen für keine.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it; error = null },
+                    label = { Text("E-Mail-Adresse") },
+                    placeholder = { Text("name@beispiel.de") },
+                    isError = error != null,
+                    supportingText = errorText(error),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { error = onSave(input) }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = { TextButton(onClick = { error = onSave(input) }) { Text("Speichern") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Abbrechen") } },
     )
 }
