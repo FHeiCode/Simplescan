@@ -1,5 +1,4 @@
-Simplescan 1.4.0: Neues Gesicht
+Simplescan 1.5.0: Aufgeräumtes Layout
 
-- Fester grüner Kopf auf der Startseite mit Logo, Schriftzug „Simplescan“ und „Scannen. Speichern. Senden.“
-- Die ganze App ist jetzt auf das Grün aus dem Logo abgestimmt, hell und dunkel
-- Grüner Scannen-Knopf und grüne Leiste bei der Mehrfachauswahl
+- Die Speicherort-Karte ist jetzt so breit wie der grüne Kopf, mit denselben runden Ecken
+- Die Liste „Zuletzt gespeichert“ reicht bis an den Rand

@@ -221,16 +221,18 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     ) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 96.dp),
+            // Kein seitlicher Abstand: Speicherort-Karte ist so breit wie der grüne Kopf.
+            contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             item {
                 Card(
                     onClick = { showTargetDialog = true },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(28.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Outlined.Folder, contentDescription = null)
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
@@ -243,6 +245,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
             }
 
             item {
+                Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
                     "Zuletzt gespeichert",
                     style = MaterialTheme.typography.titleSmall,
@@ -256,11 +259,12 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+                }
             }
 
             if (recent.isEmpty()) {
                 item {
-                    Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+                    Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp), contentAlignment = Alignment.Center) {
                         Text(
                             "Noch nichts gescannt.\nTippe auf „Scannen“, halte die Kamera über ein Blatt –\nRänder werden automatisch erkannt.\n\nMehrere Seiten? Nach dem ersten Foto einfach weitere\nSeiten hinzufügen – alle landen in einem PDF.",
                             textAlign = TextAlign.Center,
