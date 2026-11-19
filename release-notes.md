@@ -1,6 +1,5 @@
-Simplescan 1.3.0: Mehrere Scans auf einmal verschicken
+Simplescan 1.4.0: Neues Gesicht
 
-- Einen Eintrag lange drücken, weitere antippen, dann alle zusammen per E-Mail senden oder teilen
-- „Alle auswählen“ oben in der Leiste
-- Lokale PDFs kommen als Anhänge mit, Nextcloud-Scans als Links im Text, auch gemischt
-- Hinweis in der App: mehrere Seiten lassen sich in ein einziges PDF scannen
+- Fester grüner Kopf auf der Startseite mit Logo, Schriftzug „Simplescan“ und „Scannen. Speichern. Senden.“
+- Die ganze App ist jetzt auf das Grün aus dem Logo abgestimmt, hell und dunkel
+- Grüner Scannen-Knopf und grüne Leiste bei der Mehrfachauswahl

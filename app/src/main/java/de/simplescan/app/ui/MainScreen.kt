@@ -11,7 +11,20 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.sp
+import de.simplescan.app.R
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,6 +110,10 @@ import java.time.format.DateTimeFormatter
 
 private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm")
 
+// Farben aus dem App-Icon, damit Startseite und Homescreen-Symbol zusammenpassen.
+private val StageGreen = Color(0xFF1F6F5C)
+private val StageMint = Color(0xFFB9E4D6)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(vm: ScanViewModel = viewModel()) {
@@ -179,16 +196,24 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                             selection = emptyList()
                         }) { Icon(Icons.Outlined.Share, contentDescription = "Ausgewählte teilen") }
                     },
-                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = StageGreen,
+                        titleContentColor = Color.White,
+                        navigationIconContentColor = Color.White,
+                        actionIconContentColor = Color.White,
+                    ),
                 )
             } else {
-                TopAppBar(title = { Text("Simplescan") })
+                // Fester Kopf (scrollt nicht mit): Logo, Schriftzug und Unterzeile auf Grün.
+                Stage()
             }
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!selecting) ExtendedFloatingActionButton(
                 onClick = { startScan(context, scanLauncher, vm) },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
                 icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
                 text = { Text("Scannen") },
             )
@@ -298,6 +323,37 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         )
     }
 
+}
+
+/** Startseiten-Kopf: App-Logo, Schriftzug und Unterzeile auf grüner Fläche. */
+@Composable
+private fun Stage() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
+            .background(StageGreen)
+            .windowInsetsPadding(WindowInsets.statusBars)
+            .padding(top = 4.dp, bottom = 18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        // Das Vordergrund-Motiv des App-Icons (Blatt mit Scan-Ecken), ohne Hintergrund.
+        Image(
+            painter = painterResource(R.drawable.ic_launcher_foreground),
+            contentDescription = null,
+            modifier = Modifier.size(96.dp),
+        )
+        Text(
+            "Simplescan",
+            color = Color.White,
+            fontSize = 30.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.5.sp,
+            modifier = Modifier.semantics { heading() },
+        )
+        Spacer(Modifier.height(2.dp))
+        Text("Scannen. Speichern. Senden.", color = StageMint, fontSize = 14.sp)
+    }
 }
 
 @OptIn(ExperimentalFoundationApi::class)
