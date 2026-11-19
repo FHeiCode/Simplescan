@@ -103,6 +103,24 @@ class WebDavClient(private val context: Context) {
             }
         }
 
+    /**
+     * Gibt es die Datei auf dem Server noch? Nur 404/410 zählt als gelöscht.
+     * Kein Netz, falsches Passwort oder Serverfehler ergeben UNKNOWN, damit nichts fälschlich verschwindet.
+     */
+    suspend fun presence(url: String, target: Target.WebDav, password: String): Presence = withContext(Dispatchers.IO) {
+        try {
+            call(request(url, target, password).head()).use { r ->
+                when {
+                    r.isSuccessful -> Presence.PRESENT
+                    r.code == 404 || r.code == 410 -> Presence.GONE
+                    else -> Presence.UNKNOWN
+                }
+            }
+        } catch (e: DavException) {
+            Presence.UNKNOWN
+        }
+    }
+
     private fun request(url: String, target: Target.WebDav, password: String) = Request.Builder()
         .url(url)
         .header("Authorization", Credentials.basic(target.user, password, Charsets.UTF_8))

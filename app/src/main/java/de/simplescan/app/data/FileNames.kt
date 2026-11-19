@@ -4,6 +4,15 @@ import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
 /** Reine Hilfsfunktionen ohne Android-Abhängigkeit (darum per Unit-Test prüfbar). */
+/** Ergebnis der Prüfung, ob eine gespeicherte Datei noch da ist. */
+enum class Presence { PRESENT, GONE, UNKNOWN }
+
+/** Welche Einträge aus „Zuletzt gespeichert“ verschwinden: nur sicher gelöschte, nie unklare (z. B. offline). */
+object RecentPrune {
+    fun toRemove(status: Map<String, Presence>): Set<String> =
+        status.filterValues { it == Presence.GONE }.keys
+}
+
 object FileNames {
 
     private val stamp = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss")

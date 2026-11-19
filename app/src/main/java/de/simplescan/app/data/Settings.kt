@@ -146,9 +146,12 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    suspend fun removeRecent(uri: String) {
+    suspend fun removeRecent(uri: String) = removeRecent(setOf(uri))
+
+    suspend fun removeRecent(uris: Set<String>) {
+        if (uris.isEmpty()) return
         context.dataStore.edit { p ->
-            p[keyRecent] = ScanListCodec.encode(ScanListCodec.decode(p[keyRecent]).filterNot { it.uri == uri })
+            p[keyRecent] = ScanListCodec.encode(ScanListCodec.decode(p[keyRecent]).filterNot { it.uri in uris })
         }
     }
 }

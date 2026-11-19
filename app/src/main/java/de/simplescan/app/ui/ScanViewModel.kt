@@ -8,11 +8,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.simplescan.app.data.FileNames
 import de.simplescan.app.data.PdfStorage
+import de.simplescan.app.data.Presence
+import de.simplescan.app.data.RecentPrune
+import de.simplescan.app.data.WebDavPaths
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.SettingsStore
 import de.simplescan.app.data.Target
 import de.simplescan.app.data.WebDavClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -163,6 +169,58 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearDavError() {
         _davError.value = null
+    }
+
+    private var pruneJob: Job? = null
+
+    /**
+     * Entfernt Einträge, deren Datei gelöscht wurde – lokal (Download/eigener Ordner) und auf dem Server.
+     * Läuft beim Öffnen der App und jedes Mal, wenn sie wieder in den Vordergrund kommt.
+     */
+    fun pruneRecent() {
+        if (pruneJob?.isActive == true) return
+        pruneJob = viewModelScope.launch {
+            try {
+                val entries = settings.recent.first()
+                if (entries.isEmpty()) return@launch
+                val davTarget = settings.lastWebDav.first()
+                val davBase = davTarget?.let { WebDavPaths.baseUrl(it.kind, it.server, it.user) }
+                val password = if (davTarget != null && entries.any { isRemote(it.uri) }) settings.webDavPassword() else null
+
+                val status = entries.associate { e ->
+                    e.uri to when {
+                        !isRemote(e.uri) -> localPresence(e.uri)
+                        // Nur mit den gespeicherten Zugangsdaten prüfbar; Dateien auf anderen Servern bleiben stehen.
+                        davTarget != null && password != null && davBase != null && e.uri.startsWith(davBase) ->
+                            dav.presence(e.uri, davTarget, password)
+                        else -> Presence.UNKNOWN
+                    }
+                }
+                settings.removeRecent(RecentPrune.toRemove(status))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Aufräumen ist Nebensache: bei Fehlern einfach Liste lassen, wie sie ist.
+            }
+        }
+    }
+
+    private fun isRemote(uri: String) = uri.startsWith("http://") || uri.startsWith("https://")
+
+    private suspend fun localPresence(uri: String): Presence = withContext(Dispatchers.IO) {
+        try {
+            getApplication<Application>().contentResolver.openFileDescriptor(Uri.parse(uri), "r")
+                ?.use { Presence.PRESENT } ?: Presence.GONE
+        } catch (e: java.io.FileNotFoundException) {
+            Presence.GONE
+        } catch (e: IllegalArgumentException) {
+            Presence.GONE
+        } catch (e: SecurityException) {
+            // Kein Zugriff mehr (z. B. Ordnerfreigabe entzogen): für uns nicht mehr erreichbar.
+            Presence.GONE
+        } catch (e: Exception) {
+            Presence.UNKNOWN
+        }
     }
 
     fun forget(scan: SavedScan) = viewModelScope.launch { settings.removeRecent(scan.uri) }

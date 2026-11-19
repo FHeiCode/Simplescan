@@ -56,3 +56,16 @@ class LogicTest {
         assertEquals(ScanListCodec.MAX_ENTRIES, ScanListCodec.decode(ScanListCodec.encode(many)).size)
     }
 }
+
+class PruneTest {
+    @org.junit.Test
+    fun onlyDefinitelyGoneEntriesAreRemoved() {
+        val status = mapOf(
+            "content://a" to de.simplescan.app.data.Presence.PRESENT,
+            "content://b" to de.simplescan.app.data.Presence.GONE,
+            "https://c" to de.simplescan.app.data.Presence.UNKNOWN,
+            "https://d" to de.simplescan.app.data.Presence.GONE,
+        )
+        org.junit.Assert.assertEquals(setOf("content://b", "https://d"), de.simplescan.app.data.RecentPrune.toRemove(status))
+    }
+}
