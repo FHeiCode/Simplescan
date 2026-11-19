@@ -63,3 +63,25 @@ class WebDavPathsTest {
         assertEquals("WebDAV · dav.box.de", WebDavPaths.label(DavKind.WEBDAV, "dav.box.de/webdav", ""))
     }
 }
+
+class ShareLinkTest {
+    @org.junit.Test
+    fun nextcloudPathsFromFileUrl() {
+        val url = "https://c.de/nc/remote.php/dav/files/anna%40mail.de/Scans/Rechnung%20M%C3%A4rz.pdf"
+        org.junit.Assert.assertEquals("https://c.de/nc", WebDavPaths.nextcloudRoot(url))
+        org.junit.Assert.assertEquals("/Scans/Rechnung März.pdf", WebDavPaths.nextcloudUserPath(url))
+        org.junit.Assert.assertEquals("/a+b.pdf", WebDavPaths.nextcloudUserPath("https://c.de/remote.php/webdav/a+b.pdf"))
+        org.junit.Assert.assertNull(WebDavPaths.nextcloudUserPath("https://dav.box.de/webdav/a.pdf"))
+        org.junit.Assert.assertNull(WebDavPaths.nextcloudRoot("https://dav.box.de/webdav/a.pdf"))
+    }
+
+    @org.junit.Test
+    fun parsesShareResponse() {
+        val ok = """{"ocs":{"meta":{"status":"ok","statuscode":200,"message":"OK"},"data":{"id":"7","url":"https://c.de/s/AbC123","token":"AbC123"}}}"""
+        org.junit.Assert.assertEquals("https://c.de/s/AbC123", de.simplescan.app.data.ShareParser.url(ok))
+        val err = """{"ocs":{"meta":{"status":"failure","statuscode":404,"message":"Wrong path, file/folder does not exist"},"data":[]}}"""
+        org.junit.Assert.assertNull(de.simplescan.app.data.ShareParser.url(err))
+        org.junit.Assert.assertEquals("Wrong path, file/folder does not exist", de.simplescan.app.data.ShareParser.message(err))
+        org.junit.Assert.assertNull(de.simplescan.app.data.ShareParser.url("kein json"))
+    }
+}

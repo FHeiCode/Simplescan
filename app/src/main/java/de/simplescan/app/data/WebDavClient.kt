@@ -121,6 +121,37 @@ class WebDavClient(private val context: Context) {
         }
     }
 
+    /**
+     * Erstellt einen öffentlichen Nur-Lesen-Link (Nextcloud-Freigabe per Link) für eine hochgeladene Datei.
+     * Ohne Nextcloud gibt es so etwas nicht; dann wirft die Funktion eine verständliche Meldung.
+     */
+    suspend fun createPublicLink(fileUrl: String, target: Target.WebDav, password: String): String =
+        withContext(Dispatchers.IO) {
+            val root = WebDavPaths.nextcloudRoot(fileUrl)
+            val path = WebDavPaths.nextcloudUserPath(fileUrl)
+            if (root == null || path == null) throw DavException("Öffentliche Links gibt es nur bei Nextcloud.")
+            val body = okhttp3.FormBody.Builder()
+                .add("path", path)
+                .add("shareType", "3") // 3 = öffentlicher Link
+                .add("permissions", "1") // nur lesen
+                .build()
+            val req = request("$root/ocs/v2.php/apps/files_sharing/api/v1/shares", target, password)
+                .header("OCS-APIRequest", "true")
+                .header("Accept", "application/json")
+                .post(body)
+            call(req).use { r ->
+                val text = r.body?.string().orEmpty()
+                when {
+                    r.isSuccessful -> ShareParser.url(text)
+                        ?: throw DavException("Der Server hat keinen Link zurückgegeben.")
+                    r.code == 401 -> throw DavException("Benutzername oder Passwort falsch.")
+                    r.code == 403 -> throw DavException("Freigaben per Link sind auf diesem Server nicht erlaubt.")
+                    r.code == 404 -> throw DavException("Die Datei gibt es auf dem Server nicht mehr.")
+                    else -> throw DavException(ShareParser.message(text) ?: "Link konnte nicht erstellt werden (Fehler ${r.code}).")
+                }
+            }
+        }
+
     private fun request(url: String, target: Target.WebDav, password: String) = Request.Builder()
         .url(url)
         .header("Authorization", Credentials.basic(target.user, password, Charsets.UTF_8))

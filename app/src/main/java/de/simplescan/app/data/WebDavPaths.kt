@@ -54,5 +54,29 @@ object WebDavPaths {
         return if (path.isEmpty()) "$prefix · $host" else "$prefix · $host/$path"
     }
 
+    /**
+     * Nextcloud-Adresse (ohne „/remote.php/…“) aus der Adresse einer hochgeladenen Datei,
+     * z. B. „https://c.de/nc/remote.php/dav/files/anna/Scans/a.pdf“ → „https://c.de/nc“. Null, wenn kein Nextcloud-Pfad.
+     */
+    fun nextcloudRoot(fileUrl: String): String? =
+        fileUrl.indexOf("/remote.php/").takeIf { it > 0 }?.let { fileUrl.substring(0, it) }
+
+    /**
+     * Pfad der Datei innerhalb der Nextcloud-Dateien des Benutzers, wie ihn die Freigabe-Schnittstelle erwartet,
+     * z. B. „/Scans/Rechnung März.pdf“. Null, wenn die Adresse kein Nextcloud-Dateipfad ist.
+     */
+    fun nextcloudUserPath(fileUrl: String): String? {
+        val rest = when {
+            fileUrl.contains("/remote.php/dav/files/") ->
+                fileUrl.substringAfter("/remote.php/dav/files/").substringAfter('/', "")
+            fileUrl.contains("/remote.php/webdav/") -> fileUrl.substringAfter("/remote.php/webdav/")
+            else -> return null
+        }
+        if (rest.isBlank()) return null
+        return "/" + rest.split('/').filter { it.isNotEmpty() }.joinToString("/") { decodeSegment(it) }
+    }
+
+    fun decodeSegment(s: String): String = java.net.URLDecoder.decode(s.replace("+", "%2B"), "UTF-8")
+
     fun encodeSegment(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }

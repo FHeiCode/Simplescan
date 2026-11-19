@@ -2,6 +2,7 @@ package de.simplescan.app.ui
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -31,6 +32,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Share
@@ -48,8 +50,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -102,9 +106,15 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.pruneRecent() }
 
     LaunchedEffect(message) {
-        message?.let {
-            snackbar.showSnackbar(it)
+        message?.let { m ->
+            val result = snackbar.showSnackbar(
+                message = m.text,
+                actionLabel = if (m.emailScan != null) "Per E-Mail" else null,
+                withDismissAction = m.emailScan != null,
+                duration = if (m.emailScan != null) SnackbarDuration.Long else SnackbarDuration.Short,
+            )
             vm.messageShown()
+            if (result == SnackbarResult.ActionPerformed) m.emailScan?.let { sendEmail(context, it, vm) }
         }
     }
 
@@ -185,6 +195,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                         scan = scan,
                         onOpen = { openPdf(context, scan, vm) },
                         onShare = { sharePdf(context, scan, vm) },
+                        onEmail = { sendEmail(context, scan, vm) },
                     )
                     HorizontalDivider()
                 }
@@ -233,7 +244,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 }
 
 @Composable
-private fun RecentRow(scan: SavedScan, onOpen: () -> Unit, onShare: () -> Unit) {
+private fun RecentRow(scan: SavedScan, onOpen: () -> Unit, onShare: () -> Unit, onEmail: () -> Unit) {
     val date = remember(scan.savedAt) {
         dateFormat.format(Instant.ofEpochMilli(scan.savedAt).atZone(ZoneId.systemDefault()))
     }
@@ -244,7 +255,15 @@ private fun RecentRow(scan: SavedScan, onOpen: () -> Unit, onShare: () -> Unit) 
         headlineContent = { Text(scan.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text("$date · $pages · ${scan.location}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
         trailingContent = {
-            IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Teilen") }
+            Row {
+                IconButton(onClick = onEmail) {
+                    Icon(
+                        Icons.Outlined.Email,
+                        contentDescription = if (isRemote(scan)) "Link per E-Mail senden" else "Per E-Mail senden",
+                    )
+                }
+                IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Teilen") }
+            }
         },
     )
 }
@@ -399,8 +418,10 @@ private fun openPdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
 private fun sharePdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
     if (isRemote(scan)) {
         // Auf dem Server liegt nur der Link vor; die Datei selbst ist nicht auf dem Handy.
-        val link = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, scan.uri)
-        context.startActivity(Intent.createChooser(link, scan.name))
+        vm.linkFor(scan) { link, _ ->
+            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
+            context.startActivity(Intent.createChooser(send, scan.name))
+        }
         return
     }
     if (!exists(context, scan, vm)) return
@@ -492,4 +513,44 @@ private fun WebDavDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Abbrechen") } },
     )
+}
+
+/**
+ * Direkt per E-Mail senden: lokal gespeicherte PDFs als Anhang, hochgeladene als Link.
+ * Der „mailto:“-Selektor sorgt dafür, dass nur E-Mail-Apps angeboten werden.
+ */
+private fun sendEmail(context: Context, scan: SavedScan, vm: ScanViewModel) {
+    val mailOnly = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
+    if (isRemote(scan)) {
+        vm.linkFor(scan) { link, needsLogin ->
+            val hint = if (needsLogin) "\n\n(Zum Öffnen sind Zugangsdaten für den Server nötig.)" else ""
+            val body = "Hier ist der Scan „${scan.name}“:\n$link$hint"
+            // Betreff und Text stehen zusätzlich in der mailto-Adresse, weil manche Mail-Apps die Extras ignorieren.
+            val mailto = Uri.parse("mailto:?subject=" + Uri.encode(scan.name) + "&body=" + Uri.encode(body))
+            val mail = Intent(Intent.ACTION_SENDTO, mailto)
+                .putExtra(Intent.EXTRA_SUBJECT, scan.name)
+                .putExtra(Intent.EXTRA_TEXT, body)
+            startMail(context, mail, vm)
+        }
+        return
+    }
+    if (!exists(context, scan, vm)) return
+    val uri = Uri.parse(scan.uri)
+    val mail = Intent(Intent.ACTION_SEND)
+        .setType("application/pdf")
+        .putExtra(Intent.EXTRA_STREAM, uri)
+        .putExtra(Intent.EXTRA_SUBJECT, scan.name)
+        .putExtra(Intent.EXTRA_TEXT, "Anbei der Scan „${scan.name}“.")
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    mail.clipData = ClipData.newRawUri(scan.name, uri)
+    mail.selector = mailOnly
+    startMail(context, mail, vm)
+}
+
+private fun startMail(context: Context, intent: Intent, vm: ScanViewModel) {
+    try {
+        context.startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+        vm.show("Keine E-Mail-App gefunden.")
+    }
 }
