@@ -1,7 +1,7 @@
-Simplescan 1.0.0
+Simplescan 1.1.0: Nextcloud und WebDAV
 
-- Dokumente mit der Kamera scannen, auch mehrere Seiten auf einmal
-- Seitenränder werden automatisch erkannt, Zuschneiden und Drehen von Hand möglich
-- Speichern als PDF im Download-Ordner oder in einem selbst gewählten Ordner
-- Dateiname vor dem Speichern änderbar
-- Liste der zuletzt gespeicherten PDFs zum Öffnen und Teilen
+- Neues Speicherziel: PDFs direkt auf Nextcloud oder einen anderen WebDAV-Server hochladen
+- Zugang wird beim Einrichten geprüft, der Zielordner bei Bedarf angelegt
+- Gleichnamige Dateien werden nicht überschrieben, sondern bekommen „(1)“, „(2)“ … angehängt
+- Das Passwort wird verschlüsselt auf dem Handy gespeichert
+- Das Ziel lässt sich jetzt auch direkt im Speichern-Dialog ändern
