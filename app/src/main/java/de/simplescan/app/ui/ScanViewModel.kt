@@ -229,37 +229,56 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Link zu einem hochgeladenen Scan. Bei Nextcloud ein öffentlicher Link (ohne Anmeldung zu öffnen),
+     * Links zu hochgeladenen Scans. Bei Nextcloud ein öffentlicher Link (ohne Anmeldung zu öffnen),
      * einmal erstellt und gemerkt. Bei anderen WebDAV-Servern die direkte Adresse (Empfänger braucht Zugang).
+     * [onReady] bekommt je Datei-Adresse den Link und ob man sich zum Öffnen anmelden muss.
+     * Klappt ein Link nicht, gibt es eine Meldung und [onReady] wird nicht aufgerufen.
      */
-    fun linkFor(scan: SavedScan, onReady: (link: String, needsLogin: Boolean) -> Unit) {
-        if (!isRemote(scan.uri)) return
-        val cached = recent.value.firstOrNull { it.uri == scan.uri }?.shareUrl ?: scan.shareUrl
-        if (cached != null) { onReady(cached, false); return }
-        if (WebDavPaths.nextcloudRoot(scan.uri) == null) { onReady(scan.uri, true); return }
+    fun linksFor(scans: List<SavedScan>, onReady: (Map<String, Pair<String, Boolean>>) -> Unit) {
+        val remote = scans.filter { isRemote(it.uri) }
+        if (remote.isEmpty()) { onReady(emptyMap()); return }
         if (_linkBusy.value) return
         viewModelScope.launch {
             _linkBusy.value = true
+            var current: SavedScan? = null
             try {
-                val davTarget = settings.lastWebDav.first()
-                val base = davTarget?.let { WebDavPaths.baseUrl(it.kind, it.server, it.user) }
-                val password = settings.webDavPassword()
-                if (davTarget == null || base == null || password == null || !scan.uri.startsWith(base)) {
-                    throw WebDavClient.DavException("Für diesen Server sind keine Zugangsdaten mehr gespeichert.")
+                val result = LinkedHashMap<String, Pair<String, Boolean>>()
+                var announced = false
+                for (scan in remote) {
+                    current = scan
+                    val cached = recent.value.firstOrNull { it.uri == scan.uri }?.shareUrl ?: scan.shareUrl
+                    result[scan.uri] = when {
+                        cached != null -> cached to false
+                        WebDavPaths.nextcloudRoot(scan.uri) == null -> scan.uri to true
+                        else -> {
+                            if (!announced) { show(if (remote.size == 1) "Link wird erstellt …" else "Links werden erstellt …"); announced = true }
+                            createLink(scan) to false
+                        }
+                    }
                 }
-                show("Link wird erstellt …")
-                val link = dav.createPublicLink(scan.uri, davTarget, password)
-                settings.setShareUrl(scan.uri, link)
-                messageShown()
-                onReady(link, false)
+                if (announced) messageShown()
+                onReady(result)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                show("Link konnte nicht erstellt werden: ${e.message ?: "unbekannter Fehler"}")
+                val name = current?.name?.let { " für „$it“" } ?: ""
+                show("Link$name konnte nicht erstellt werden: ${e.message ?: "unbekannter Fehler"}")
             } finally {
                 _linkBusy.value = false
             }
         }
+    }
+
+    private suspend fun createLink(scan: SavedScan): String {
+        val davTarget = settings.lastWebDav.first()
+        val base = davTarget?.let { WebDavPaths.baseUrl(it.kind, it.server, it.user) }
+        val password = settings.webDavPassword()
+        if (davTarget == null || base == null || password == null || !scan.uri.startsWith(base)) {
+            throw WebDavClient.DavException("Für diesen Server sind keine Zugangsdaten mehr gespeichert.")
+        }
+        val link = dav.createPublicLink(scan.uri, davTarget, password)
+        settings.setShareUrl(scan.uri, link)
+        return link
     }
 
     fun forget(scan: SavedScan) = viewModelScope.launch { settings.removeRecent(scan.uri) }

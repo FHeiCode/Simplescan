@@ -2,18 +2,16 @@ package de.simplescan.app.ui
 
 import android.app.Activity
 import android.content.ActivityNotFoundException
-import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.content.pm.ResolveInfo
-import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,7 +32,9 @@ import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.SelectAll
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.DocumentScanner
 import androidx.compose.material.icons.outlined.Folder
@@ -42,6 +42,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExtendedFloatingActionButton
@@ -49,6 +50,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -60,6 +62,7 @@ import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -117,11 +120,25 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 duration = if (m.emailScan != null) SnackbarDuration.Long else SnackbarDuration.Short,
             )
             vm.messageShown()
-            if (result == SnackbarResult.ActionPerformed) m.emailScan?.let { sendEmail(context, it, vm) }
+            if (result == SnackbarResult.ActionPerformed) m.emailScan?.let { sendScans(context, listOf(it), vm, email = true) }
         }
     }
 
     var showTargetDialog by remember { mutableStateOf(false) }
+
+    // Mehrfachauswahl: Adressen der ausgewählten Einträge. Leer = normale Ansicht.
+    var selection by rememberSaveable { mutableStateOf(listOf<String>()) }
+    val selecting = selection.isNotEmpty()
+    fun toggle(scan: SavedScan) {
+        selection = if (scan.uri in selection) selection - scan.uri else selection + scan.uri
+    }
+    // Gelöschte Einträge fallen auch aus der Auswahl.
+    LaunchedEffect(recent) {
+        val uris = recent.map { it.uri }.toSet()
+        if (selection.any { it !in uris }) selection = selection.filter { it in uris }
+    }
+    BackHandler(enabled = selecting) { selection = emptyList() }
+    fun selectedScans() = recent.filter { it.uri in selection }
     var showWebDavDialog by remember { mutableStateOf(false) }
     val lastWebDav by vm.lastWebDav.collectAsStateWithLifecycle()
     val davBusy by vm.davBusy.collectAsStateWithLifecycle()
@@ -140,10 +157,37 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     }
 
     Scaffold(
-        topBar = { TopAppBar(title = { Text("Simplescan") }) },
+        topBar = {
+            if (selecting) {
+                TopAppBar(
+                    navigationIcon = {
+                        IconButton(onClick = { selection = emptyList() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Auswahl beenden")
+                        }
+                    },
+                    title = { Text("${selection.size} ausgewählt") },
+                    actions = {
+                        IconButton(onClick = { selection = recent.map { it.uri } }) {
+                            Icon(Icons.Outlined.SelectAll, contentDescription = "Alle auswählen")
+                        }
+                        IconButton(onClick = {
+                            sendScans(context, selectedScans(), vm, email = true)
+                            selection = emptyList()
+                        }) { Icon(Icons.Outlined.Email, contentDescription = "Ausgewählte per E-Mail senden") }
+                        IconButton(onClick = {
+                            sendScans(context, selectedScans(), vm, email = false)
+                            selection = emptyList()
+                        }) { Icon(Icons.Outlined.Share, contentDescription = "Ausgewählte teilen") }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+                )
+            } else {
+                TopAppBar(title = { Text("Simplescan") })
+            }
+        },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
+            if (!selecting) ExtendedFloatingActionButton(
                 onClick = { startScan(context, scanLauncher, vm) },
                 icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
                 text = { Text("Scannen") },
@@ -180,13 +224,20 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.padding(top = 12.dp, bottom = 4.dp),
                 )
+                if (recent.size > 1 && !selecting) {
+                    Text(
+                        "Lange drücken, um mehrere auszuwählen und zusammen zu verschicken.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             if (recent.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            "Noch nichts gescannt.\nTippe auf „Scannen“, halte die Kamera über ein Blatt –\nRänder werden automatisch erkannt.",
+                            "Noch nichts gescannt.\nTippe auf „Scannen“, halte die Kamera über ein Blatt –\nRänder werden automatisch erkannt.\n\nMehrere Seiten? Nach dem ersten Foto einfach weitere\nSeiten hinzufügen – alle landen in einem PDF.",
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -196,9 +247,12 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 items(recent, key = { it.uri }) { scan ->
                     RecentRow(
                         scan = scan,
-                        onOpen = { openPdf(context, scan, vm) },
-                        onShare = { sharePdf(context, scan, vm) },
-                        onEmail = { sendEmail(context, scan, vm) },
+                        selecting = selecting,
+                        selected = scan.uri in selection,
+                        onOpen = { if (selecting) toggle(scan) else openPdf(context, scan, vm) },
+                        onLongPress = { toggle(scan) },
+                        onShare = { sendScans(context, listOf(scan), vm, email = false) },
+                        onEmail = { sendScans(context, listOf(scan), vm, email = true) },
                     )
                     HorizontalDivider()
                 }
@@ -246,19 +300,36 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun RecentRow(scan: SavedScan, onOpen: () -> Unit, onShare: () -> Unit, onEmail: () -> Unit) {
+private fun RecentRow(
+    scan: SavedScan,
+    selecting: Boolean,
+    selected: Boolean,
+    onOpen: () -> Unit,
+    onLongPress: () -> Unit,
+    onShare: () -> Unit,
+    onEmail: () -> Unit,
+) {
     val date = remember(scan.savedAt) {
         dateFormat.format(Instant.ofEpochMilli(scan.savedAt).atZone(ZoneId.systemDefault()))
     }
     val pages = if (scan.pages == 1) "1 Seite" else "${scan.pages} Seiten"
     ListItem(
-        modifier = Modifier.clickable(onClick = onOpen),
-        leadingContent = { Icon(Icons.Outlined.Description, contentDescription = null) },
+        modifier = Modifier.combinedClickable(onClick = onOpen, onLongClick = onLongPress),
+        colors = if (selected) {
+            ListItemDefaults.colors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+        } else {
+            ListItemDefaults.colors()
+        },
+        leadingContent = {
+            if (selecting) Checkbox(checked = selected, onCheckedChange = null)
+            else Icon(Icons.Outlined.Description, contentDescription = null)
+        },
         headlineContent = { Text(scan.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
         supportingContent = { Text("$date · $pages · ${scan.location}", maxLines = 2, overflow = TextOverflow.Ellipsis) },
-        trailingContent = {
-            Row {
+        trailingContent = if (selecting) null else {
+            { Row {
                 IconButton(onClick = onEmail) {
                     Icon(
                         Icons.Outlined.Email,
@@ -266,7 +337,7 @@ private fun RecentRow(scan: SavedScan, onOpen: () -> Unit, onShare: () -> Unit, 
                     )
                 }
                 IconButton(onClick = onShare) { Icon(Icons.Outlined.Share, contentDescription = "Teilen") }
-            }
+            } }
         },
     )
 }
@@ -383,9 +454,9 @@ private fun startScan(context: Context, launcher: ActivityResultLauncher<IntentS
 }
 
 /** Prüft, ob die Datei noch da ist; sonst verschwindet sie aus der Liste. */
-private fun isRemote(scan: SavedScan) = scan.uri.startsWith("http://") || scan.uri.startsWith("https://")
+internal fun isRemote(scan: SavedScan) = scan.uri.startsWith("http://") || scan.uri.startsWith("https://")
 
-private fun exists(context: Context, scan: SavedScan, vm: ScanViewModel): Boolean {
+internal fun exists(context: Context, scan: SavedScan, vm: ScanViewModel): Boolean {
     if (isRemote(scan)) return true // liegt auf dem Server, hier nicht prüfbar
     val ok = runCatching {
         context.contentResolver.openFileDescriptor(Uri.parse(scan.uri), "r")?.use { true } ?: false
@@ -416,23 +487,6 @@ private fun openPdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
     } catch (e: ActivityNotFoundException) {
         vm.show("Keine App zum Anzeigen von PDFs gefunden.")
     }
-}
-
-private fun sharePdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
-    if (isRemote(scan)) {
-        // Auf dem Server liegt nur der Link vor; die Datei selbst ist nicht auf dem Handy.
-        vm.linkFor(scan) { link, _ ->
-            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
-            context.startActivity(Intent.createChooser(send, scan.name))
-        }
-        return
-    }
-    if (!exists(context, scan, vm)) return
-    val send = Intent(Intent.ACTION_SEND)
-        .setType("application/pdf")
-        .putExtra(Intent.EXTRA_STREAM, Uri.parse(scan.uri))
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    context.startActivity(Intent.createChooser(send, scan.name))
 }
 
 @Composable
@@ -516,88 +570,4 @@ private fun WebDavDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Abbrechen") } },
     )
-}
-
-/**
- * Direkt per E-Mail senden: lokal gespeicherte PDFs als Anhang, hochgeladene als Link.
- *
- * Issue #3: Vorher lief der Anhang-Versand über ACTION_SEND mit einem „mailto:“-Selektor. Diesen Trick
- * unterstützen nicht alle Mail-Apps (die App, die „mailto:“ annimmt, muss auch ACTION_SEND mit Anhang
- * im selben Fenster annehmen); dann warf Android „ActivityNotFound“, obwohl Mail-Apps installiert waren.
- * Jetzt suchen wir die Mail-Apps selbst (alle, die „mailto:“ öffnen) und schicken den Anhang gezielt
- * an die, die auch PDFs annehmen. Findet sich keine, kommt das normale Teilen-Menü statt einer Fehlermeldung.
- */
-private fun sendEmail(context: Context, scan: SavedScan, vm: ScanViewModel) {
-    if (isRemote(scan)) {
-        vm.linkFor(scan) { link, needsLogin ->
-            val hint = if (needsLogin) "\n\n(Zum Öffnen sind Zugangsdaten für den Server nötig.)" else ""
-            val body = "Hier ist der Scan „${scan.name}“:\n$link$hint"
-            // Betreff und Text stehen zusätzlich in der mailto-Adresse, weil manche Mail-Apps die Extras ignorieren.
-            val mailto = Uri.parse("mailto:?subject=" + Uri.encode(scan.name) + "&body=" + Uri.encode(body))
-            val mail = Intent(Intent.ACTION_SENDTO, mailto)
-                .putExtra(Intent.EXTRA_SUBJECT, scan.name)
-                .putExtra(Intent.EXTRA_TEXT, body)
-            val fallback = Intent(Intent.ACTION_SEND).setType("text/plain")
-                .putExtra(Intent.EXTRA_SUBJECT, scan.name)
-                .putExtra(Intent.EXTRA_TEXT, body)
-            startMail(context, listOf(mail), fallback, vm)
-        }
-        return
-    }
-    if (!exists(context, scan, vm)) return
-    val uri = Uri.parse(scan.uri)
-    fun attachment() = Intent(Intent.ACTION_SEND)
-        .setType("application/pdf")
-        .putExtra(Intent.EXTRA_STREAM, uri)
-        .putExtra(Intent.EXTRA_SUBJECT, scan.name)
-        .putExtra(Intent.EXTRA_TEXT, "Anbei der Scan „${scan.name}“.")
-        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        .also { it.clipData = ClipData.newRawUri(scan.name, uri) }
-
-    val targets = mailPackages(context)
-        .map { pkg -> attachment().setPackage(pkg) }
-        .filter { canHandle(context, it) }
-    startMail(context, targets, attachment(), vm)
-}
-
-/** Pakete aller Apps, die „mailto:“ öffnen, also E-Mail-Apps. Braucht den <queries>-Eintrag im Manifest. */
-private fun mailPackages(context: Context): List<String> =
-    queryActivities(context, Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")))
-        .map { it.activityInfo.packageName }
-        .distinct()
-        .filter { it != context.packageName }
-
-private fun canHandle(context: Context, intent: Intent) = queryActivities(context, intent).isNotEmpty()
-
-@Suppress("DEPRECATION")
-private fun queryActivities(context: Context, intent: Intent): List<ResolveInfo> {
-    val pm = context.packageManager
-    return if (Build.VERSION.SDK_INT >= 33) {
-        pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
-    } else {
-        pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
-    }
-}
-
-/**
- * Eine Mail-App → direkt öffnen. Mehrere → Auswahl nur mit diesen Apps.
- * Keine (oder Start scheitert) → normales Teilen-Menü mit [fallback], damit der Nutzer nie festhängt.
- */
-private fun startMail(context: Context, targets: List<Intent>, fallback: Intent, vm: ScanViewModel) {
-    try {
-        when (targets.size) {
-            0 -> context.startActivity(Intent.createChooser(fallback, "Senden mit"))
-            1 -> context.startActivity(targets[0])
-            else -> context.startActivity(
-                Intent.createChooser(targets[0], "Per E-Mail senden")
-                    .putExtra(Intent.EXTRA_INITIAL_INTENTS, targets.drop(1).toTypedArray())
-            )
-        }
-    } catch (e: ActivityNotFoundException) {
-        try {
-            context.startActivity(Intent.createChooser(fallback, "Senden mit"))
-        } catch (e2: ActivityNotFoundException) {
-            vm.show("Keine App zum Versenden gefunden.")
-        }
-    }
 }

@@ -1,5 +1,6 @@
-Simplescan 1.2.1: E-Mail-Versand repariert
+Simplescan 1.3.0: Mehrere Scans auf einmal verschicken
 
-- Versand per E-Mail findet installierte Mail-Apps jetzt zuverlässig (vorher kam fälschlich „Keine E-Mail-App gefunden“)
-- Bei mehreren Mail-Apps erscheint eine Auswahl nur mit Mail-Apps
-- Findet sich keine Mail-App, öffnet sich das normale Teilen-Menü statt einer Fehlermeldung
+- Einen Eintrag lange drücken, weitere antippen, dann alle zusammen per E-Mail senden oder teilen
+- „Alle auswählen“ oben in der Leiste
+- Lokale PDFs kommen als Anhänge mit, Nextcloud-Scans als Links im Text, auch gemischt
+- Hinweis in der App: mehrere Seiten lassen sich in ein einziges PDF scannen
