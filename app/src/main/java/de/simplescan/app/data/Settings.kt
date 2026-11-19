@@ -40,6 +40,8 @@ data class SavedScan(
     val location: String,
     val pages: Int,
     val savedAt: Long,
+    /** Öffentlicher Nextcloud-Link, einmal erstellt und dann wiederverwendet. */
+    val shareUrl: String? = null,
 )
 
 object ScanListCodec {
@@ -54,6 +56,7 @@ object ScanListCodec {
                     .put("location", it.location)
                     .put("pages", it.pages)
                     .put("savedAt", it.savedAt)
+                    .apply { it.shareUrl?.let { url -> put("shareUrl", url) } }
             )
         }
     }.toString()
@@ -72,6 +75,7 @@ object ScanListCodec {
                 location = o.optString("location", ""),
                 pages = o.optInt("pages", 0),
                 savedAt = o.optLong("savedAt", 0L),
+                shareUrl = o.optString("shareUrl", "").ifBlank { null },
             )
         }
     }
@@ -146,9 +150,20 @@ class SettingsStore(private val context: Context) {
         }
     }
 
-    suspend fun removeRecent(uri: String) {
+    suspend fun setShareUrl(uri: String, shareUrl: String) {
         context.dataStore.edit { p ->
-            p[keyRecent] = ScanListCodec.encode(ScanListCodec.decode(p[keyRecent]).filterNot { it.uri == uri })
+            p[keyRecent] = ScanListCodec.encode(
+                ScanListCodec.decode(p[keyRecent]).map { if (it.uri == uri) it.copy(shareUrl = shareUrl) else it }
+            )
+        }
+    }
+
+    suspend fun removeRecent(uri: String) = removeRecent(setOf(uri))
+
+    suspend fun removeRecent(uris: Set<String>) {
+        if (uris.isEmpty()) return
+        context.dataStore.edit { p ->
+            p[keyRecent] = ScanListCodec.encode(ScanListCodec.decode(p[keyRecent]).filterNot { it.uri in uris })
         }
     }
 }

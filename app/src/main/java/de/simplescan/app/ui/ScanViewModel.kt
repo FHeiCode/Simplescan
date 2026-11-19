@@ -8,11 +8,17 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import de.simplescan.app.data.FileNames
 import de.simplescan.app.data.PdfStorage
+import de.simplescan.app.data.Presence
+import de.simplescan.app.data.RecentPrune
+import de.simplescan.app.data.WebDavPaths
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.SettingsStore
 import de.simplescan.app.data.Target
 import de.simplescan.app.data.WebDavClient
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -21,6 +27,9 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+
+/** Hinweis unten am Rand; mit [emailScan] bekommt er die Aktion „Per E-Mail“. */
+data class UiMessage(val text: String, val emailScan: SavedScan? = null)
 
 /** Ein fertiger Scan, der noch auf „Speichern“ wartet. */
 data class PendingScan(val pdfUri: Uri, val pages: Int, val suggestedName: String)
@@ -51,8 +60,11 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _saving = MutableStateFlow(false)
     val saving: StateFlow<Boolean> = _saving.asStateFlow()
 
-    private val _message = MutableStateFlow<String?>(null)
-    val message: StateFlow<String?> = _message.asStateFlow()
+    private val _message = MutableStateFlow<UiMessage?>(null)
+    val message: StateFlow<UiMessage?> = _message.asStateFlow()
+
+    private val _linkBusy = MutableStateFlow(false)
+    val linkBusy: StateFlow<Boolean> = _linkBusy.asStateFlow()
 
     fun onScanned(pdfUri: Uri, pages: Int) {
         _pending.value = PendingScan(pdfUri, pages, FileNames.suggestion())
@@ -79,17 +91,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     else -> "$name.pdf" to storage.save(scan.pdfUri, name, tgt).toString()
                 }
-                settings.addRecent(
-                    SavedScan(
-                        name = savedName,
-                        uri = uri,
-                        location = tgt.label,
-                        pages = scan.pages,
-                        savedAt = System.currentTimeMillis(),
-                    )
+                val saved = SavedScan(
+                    name = savedName,
+                    uri = uri,
+                    location = tgt.label,
+                    pages = scan.pages,
+                    savedAt = System.currentTimeMillis(),
                 )
+                settings.addRecent(saved)
                 _pending.value = null
-                show("Gespeichert: $savedName (${tgt.label})")
+                _message.value = UiMessage("Gespeichert: $savedName (${tgt.label})", emailScan = saved)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -165,10 +176,96 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         _davError.value = null
     }
 
+    private var pruneJob: Job? = null
+
+    /**
+     * Entfernt Einträge, deren Datei gelöscht wurde – lokal (Download/eigener Ordner) und auf dem Server.
+     * Läuft beim Öffnen der App und jedes Mal, wenn sie wieder in den Vordergrund kommt.
+     */
+    fun pruneRecent() {
+        if (pruneJob?.isActive == true) return
+        pruneJob = viewModelScope.launch {
+            try {
+                val entries = settings.recent.first()
+                if (entries.isEmpty()) return@launch
+                val davTarget = settings.lastWebDav.first()
+                val davBase = davTarget?.let { WebDavPaths.baseUrl(it.kind, it.server, it.user) }
+                val password = if (davTarget != null && entries.any { isRemote(it.uri) }) settings.webDavPassword() else null
+
+                val status = entries.associate { e ->
+                    e.uri to when {
+                        !isRemote(e.uri) -> localPresence(e.uri)
+                        // Nur mit den gespeicherten Zugangsdaten prüfbar; Dateien auf anderen Servern bleiben stehen.
+                        davTarget != null && password != null && davBase != null && e.uri.startsWith(davBase) ->
+                            dav.presence(e.uri, davTarget, password)
+                        else -> Presence.UNKNOWN
+                    }
+                }
+                settings.removeRecent(RecentPrune.toRemove(status))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Aufräumen ist Nebensache: bei Fehlern einfach Liste lassen, wie sie ist.
+            }
+        }
+    }
+
+    private fun isRemote(uri: String) = uri.startsWith("http://") || uri.startsWith("https://")
+
+    private suspend fun localPresence(uri: String): Presence = withContext(Dispatchers.IO) {
+        try {
+            getApplication<Application>().contentResolver.openFileDescriptor(Uri.parse(uri), "r")
+                ?.use { Presence.PRESENT } ?: Presence.GONE
+        } catch (e: java.io.FileNotFoundException) {
+            Presence.GONE
+        } catch (e: IllegalArgumentException) {
+            Presence.GONE
+        } catch (e: SecurityException) {
+            // Kein Zugriff mehr (z. B. Ordnerfreigabe entzogen): für uns nicht mehr erreichbar.
+            Presence.GONE
+        } catch (e: Exception) {
+            Presence.UNKNOWN
+        }
+    }
+
+    /**
+     * Link zu einem hochgeladenen Scan. Bei Nextcloud ein öffentlicher Link (ohne Anmeldung zu öffnen),
+     * einmal erstellt und gemerkt. Bei anderen WebDAV-Servern die direkte Adresse (Empfänger braucht Zugang).
+     */
+    fun linkFor(scan: SavedScan, onReady: (link: String, needsLogin: Boolean) -> Unit) {
+        if (!isRemote(scan.uri)) return
+        val cached = recent.value.firstOrNull { it.uri == scan.uri }?.shareUrl ?: scan.shareUrl
+        if (cached != null) { onReady(cached, false); return }
+        if (WebDavPaths.nextcloudRoot(scan.uri) == null) { onReady(scan.uri, true); return }
+        if (_linkBusy.value) return
+        viewModelScope.launch {
+            _linkBusy.value = true
+            try {
+                val davTarget = settings.lastWebDav.first()
+                val base = davTarget?.let { WebDavPaths.baseUrl(it.kind, it.server, it.user) }
+                val password = settings.webDavPassword()
+                if (davTarget == null || base == null || password == null || !scan.uri.startsWith(base)) {
+                    throw WebDavClient.DavException("Für diesen Server sind keine Zugangsdaten mehr gespeichert.")
+                }
+                show("Link wird erstellt …")
+                val link = dav.createPublicLink(scan.uri, davTarget, password)
+                settings.setShareUrl(scan.uri, link)
+                messageShown()
+                onReady(link, false)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                show("Link konnte nicht erstellt werden: ${e.message ?: "unbekannter Fehler"}")
+            } finally {
+                _linkBusy.value = false
+            }
+        }
+    }
+
     fun forget(scan: SavedScan) = viewModelScope.launch { settings.removeRecent(scan.uri) }
 
     fun show(text: String) {
-        _message.value = text
+        _message.value = UiMessage(text)
     }
 
     fun messageShown() = _message.update { null }
