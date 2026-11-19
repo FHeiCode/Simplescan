@@ -237,7 +237,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
                         Text(
-                            "Noch nichts gescannt.\nTippe auf „Scannen“, halte die Kamera über ein Blatt –\nRänder werden automatisch erkannt.",
+                            "Noch nichts gescannt.\nTippe auf „Scannen“, halte die Kamera über ein Blatt –\nRänder werden automatisch erkannt.\n\nMehrere Seiten? Nach dem ersten Foto einfach weitere\nSeiten hinzufügen – alle landen in einem PDF.",
                             textAlign = TextAlign.Center,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
