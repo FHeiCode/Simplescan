@@ -8,6 +8,7 @@ import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.Build
+import de.simplescan.app.data.EmailList
 import de.simplescan.app.data.RemoteLink
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.ShareText
@@ -31,6 +32,8 @@ internal fun sendScans(context: Context, scans: List<SavedScan>, vm: ScanViewMod
         val remoteLinks = remote.mapNotNull { s -> links[s.uri]?.let { (link, login) -> RemoteLink(s.name, link, login) } }
         val body = ShareText.body(local.map { it.name }, remoteLinks)
         val uris = ArrayList(local.map { Uri.parse(it.uri) })
+        // Feste Empfänger (falls eingestellt) stehen gleich im Feld „An“.
+        val recipients = EmailList.split(vm.defaultEmail.value)
 
         fun attachments(withText: Boolean): Intent? {
             if (uris.isEmpty()) return null
@@ -43,6 +46,7 @@ internal fun sendScans(context: Context, scans: List<SavedScan>, vm: ScanViewMod
                 .putExtra(Intent.EXTRA_SUBJECT, subject)
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             if (withText) intent.putExtra(Intent.EXTRA_TEXT, body)
+            if (email && recipients.isNotEmpty()) intent.putExtra(Intent.EXTRA_EMAIL, recipients.toTypedArray())
             // Über ClipData bekommt die Ziel-App die Leseberechtigung für alle Dateien.
             val clip = ClipData.newRawUri(subject, uris[0])
             uris.drop(1).forEach { clip.addItem(ClipData.Item(it)) }
@@ -59,10 +63,14 @@ internal fun sendScans(context: Context, scans: List<SavedScan>, vm: ScanViewMod
             if (withFiles == null) {
                 // Nur Links: einfache Mail. Betreff und Text stehen zusätzlich in der mailto-Adresse,
                 // weil manche Mail-Apps die Extras ignorieren.
-                val mailto = Uri.parse("mailto:?subject=" + Uri.encode(subject) + "&body=" + Uri.encode(body))
+                val mailto = Uri.parse(
+                    "mailto:" + EmailList.mailtoRecipients(recipients) +
+                        "?subject=" + Uri.encode(subject) + "&body=" + Uri.encode(body)
+                )
                 val mail = Intent(Intent.ACTION_SENDTO, mailto)
                     .putExtra(Intent.EXTRA_SUBJECT, subject)
                     .putExtra(Intent.EXTRA_TEXT, body)
+                if (recipients.isNotEmpty()) mail.putExtra(Intent.EXTRA_EMAIL, recipients.toTypedArray())
                 startMail(context, listOf(mail), textOnly(), vm)
             } else {
                 val targets = mailPackages(context)
