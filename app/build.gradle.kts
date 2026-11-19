@@ -89,6 +89,8 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Hochladen zu Nextcloud/WebDAV (eigene Methoden wie PROPFIND und MKCOL)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Google ML Kit Dokumentenscanner: Kamera, Seitenerkennung, Zuschneiden, Filter, PDF.
     // Läuft über die Google-Play-Dienste, braucht keine Kameraberechtigung in der App.

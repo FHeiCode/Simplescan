@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -64,6 +66,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -72,6 +76,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
 import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
+import de.simplescan.app.data.DavKind
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.Target
 import java.time.Instant
@@ -99,6 +104,10 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     }
 
     var showTargetDialog by remember { mutableStateOf(false) }
+    var showWebDavDialog by remember { mutableStateOf(false) }
+    val lastWebDav by vm.lastWebDav.collectAsStateWithLifecycle()
+    val davBusy by vm.davBusy.collectAsStateWithLifecycle()
+    val davError by vm.davError.collectAsStateWithLifecycle()
 
     // Ergebnis des Scanners: fertiges PDF im App-Cache, das wir danach an den Speicherort kopieren.
     val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
@@ -178,6 +187,17 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         }
     }
 
+    pending?.let { scan ->
+        SaveDialog(
+            scan = scan,
+            targetLabel = target.label,
+            saving = saving,
+            onSave = vm::savePending,
+            onDiscard = vm::discardPending,
+            onChangeTarget = { showTargetDialog = true },
+        )
+    }
+
     if (showTargetDialog) {
         TargetDialog(
             current = target,
@@ -190,19 +210,21 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                     vm.show("Auf diesem Gerät gibt es keinen Ordnerauswahl-Dialog.")
                 }
             },
+            onWebDav = { showTargetDialog = false; vm.clearDavError(); showWebDavDialog = true },
             onDismiss = { showTargetDialog = false },
         )
     }
 
-    pending?.let { scan ->
-        SaveDialog(
-            scan = scan,
-            targetLabel = target.label,
-            saving = saving,
-            onSave = vm::savePending,
-            onDiscard = vm::discardPending,
+    if (showWebDavDialog) {
+        WebDavDialog(
+            initial = (target as? Target.WebDav) ?: lastWebDav,
+            busy = davBusy,
+            error = davError,
+            onSave = { t, pw -> vm.setupWebDav(t, pw) { showWebDavDialog = false } },
+            onDismiss = { if (!davBusy) showWebDavDialog = false },
         )
     }
+
 }
 
 @Composable
@@ -227,6 +249,7 @@ private fun TargetDialog(
     current: Target,
     onDownloads: () -> Unit,
     onPickFolder: () -> Unit,
+    onWebDav: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     AlertDialog(
@@ -240,6 +263,12 @@ private fun TargetDialog(
                     title = "Eigener Ordner …",
                     subtitle = (current as? Target.Folder)?.label ?: "Ordner auf dem Telefon wählen",
                     onClick = onPickFolder,
+                )
+                OptionRow(
+                    selected = current is Target.WebDav,
+                    title = "Nextcloud / WebDAV …",
+                    subtitle = (current as? Target.WebDav)?.label ?: "Direkt auf deinen Server hochladen",
+                    onClick = onWebDav,
                 )
             }
         },
@@ -271,6 +300,7 @@ private fun SaveDialog(
     saving: Boolean,
     onSave: (String) -> Unit,
     onDiscard: () -> Unit,
+    onChangeTarget: () -> Unit,
 ) {
     var name by rememberSaveable(scan.pdfUri.toString()) { mutableStateOf(scan.suggestedName) }
     val pages = if (scan.pages == 1) "1 Seite" else "${scan.pages} Seiten"
@@ -291,7 +321,14 @@ private fun SaveDialog(
                     modifier = Modifier.fillMaxWidth(),
                 )
                 Spacer(Modifier.height(8.dp))
-                Text("$pages · Ziel: $targetLabel", style = MaterialTheme.typography.bodySmall)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "$pages · Ziel: $targetLabel",
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = onChangeTarget, enabled = !saving) { Text("Ändern") }
+                }
             }
         },
         confirmButton = {
@@ -319,7 +356,10 @@ private fun startScan(context: Context, launcher: ActivityResultLauncher<IntentS
 }
 
 /** Prüft, ob die Datei noch da ist; sonst verschwindet sie aus der Liste. */
+private fun isRemote(scan: SavedScan) = scan.uri.startsWith("http://") || scan.uri.startsWith("https://")
+
 private fun exists(context: Context, scan: SavedScan, vm: ScanViewModel): Boolean {
+    if (isRemote(scan)) return true // liegt auf dem Server, hier nicht prüfbar
     val ok = runCatching {
         context.contentResolver.openFileDescriptor(Uri.parse(scan.uri), "r")?.use { true } ?: false
     }.getOrDefault(false)
@@ -331,6 +371,15 @@ private fun exists(context: Context, scan: SavedScan, vm: ScanViewModel): Boolea
 }
 
 private fun openPdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
+    if (isRemote(scan)) {
+        // Auf dem Server: im Browser öffnen (der Server fragt dort nach der Anmeldung).
+        try {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(scan.uri)))
+        } catch (e: ActivityNotFoundException) {
+            vm.show("Kein Browser gefunden.")
+        }
+        return
+    }
     if (!exists(context, scan, vm)) return
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(Uri.parse(scan.uri), "application/pdf")
@@ -343,10 +392,99 @@ private fun openPdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
 }
 
 private fun sharePdf(context: Context, scan: SavedScan, vm: ScanViewModel) {
+    if (isRemote(scan)) {
+        // Auf dem Server liegt nur der Link vor; die Datei selbst ist nicht auf dem Handy.
+        val link = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, scan.uri)
+        context.startActivity(Intent.createChooser(link, scan.name))
+        return
+    }
     if (!exists(context, scan, vm)) return
     val send = Intent(Intent.ACTION_SEND)
         .setType("application/pdf")
         .putExtra(Intent.EXTRA_STREAM, Uri.parse(scan.uri))
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     context.startActivity(Intent.createChooser(send, scan.name))
+}
+
+@Composable
+private fun WebDavDialog(
+    initial: Target.WebDav?,
+    busy: Boolean,
+    error: String?,
+    onSave: (Target.WebDav, String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var kind by rememberSaveable { mutableStateOf(initial?.kind ?: DavKind.NEXTCLOUD) }
+    var server by rememberSaveable { mutableStateOf(initial?.server ?: "") }
+    var user by rememberSaveable { mutableStateOf(initial?.user ?: "") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var folder by rememberSaveable { mutableStateOf(initial?.folder ?: "Scans") }
+    val hasStoredPassword = initial != null
+
+    fun submit() = onSave(Target.WebDav(kind, server.trim(), user.trim(), folder.trim()), password)
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Nextcloud / WebDAV") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                OptionRow(kind == DavKind.NEXTCLOUD, "Nextcloud", "Normale Adresse genügt, z. B. cloud.example.de") {
+                    kind = DavKind.NEXTCLOUD
+                }
+                OptionRow(kind == DavKind.WEBDAV, "Anderer WebDAV-Server", "Vollständige WebDAV-Adresse") {
+                    kind = DavKind.WEBDAV
+                }
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = server, onValueChange = { server = it },
+                    label = { Text(if (kind == DavKind.NEXTCLOUD) "Server-Adresse" else "WebDAV-Adresse") },
+                    singleLine = true, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = user, onValueChange = { user = it },
+                    label = { Text("Benutzername") },
+                    singleLine = true, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = password, onValueChange = { password = it },
+                    label = { Text(if (kind == DavKind.NEXTCLOUD) "App-Passwort" else "Passwort") },
+                    placeholder = { if (hasStoredPassword) Text("unverändert lassen") },
+                    singleLine = true, enabled = !busy,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = folder, onValueChange = { folder = it },
+                    label = { Text("Ordner auf dem Server") },
+                    supportingText = { Text("Wird angelegt, falls er fehlt. Leer = oberste Ebene.") },
+                    singleLine = true, enabled = !busy,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { if (!busy) submit() }),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                if (kind == DavKind.NEXTCLOUD) {
+                    Text(
+                        "App-Passwort anlegen: in Nextcloud unter Persönliche Einstellungen → Sicherheit.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (error != null) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { submit() }, enabled = !busy) {
+                if (busy) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Prüfen und speichern")
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss, enabled = !busy) { Text("Abbrechen") } },
+    )
 }

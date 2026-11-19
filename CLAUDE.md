@@ -40,7 +40,7 @@ Ausgangspunkt ist das letzte Release (`gh release view --json tagName`), sonst `
 ## Code
 - Schichten: `data/` (Dateinamen `FileNames`, Speichern `PdfStorage`, Einstellungen und Verlauf `SettingsStore` mit DataStore), `ui/` (ViewModel, Screens, Theme).
 - Scannen übernimmt der ML-Kit-Dokumentenscanner (Google-Play-Dienste): Seitenerkennung, Zuschneiden, Filter, PDF. Keine Kameraberechtigung in der App.
-- Speichern: Download-Ordner über MediaStore, eigener Ordner über den Ordnerauswahl-Dialog (dauerhafte URI-Freigabe). Keine Speicherberechtigungen.
-- Reine Logik in `FileNames`/`ScanListCodec` mit Tests in `app/src/test`.
+- Speichern: Download-Ordner über MediaStore, eigener Ordner über den Ordnerauswahl-Dialog (dauerhafte URI-Freigabe), Nextcloud/WebDAV per OkHttp (`WebDavClient`, Adressen in `WebDavPaths`, Passwort verschlüsselt über `SecretBox`). Keine Speicherberechtigungen; INTERNET nur für WebDAV.
+- Reine Logik in `FileNames`/`ScanListCodec`/`WebDavPaths` mit Tests in `app/src/test`.
 - `CancellationException` immer weiterwerfen; Fehler als verständliche Meldung statt Absturz.
 - Keine fremden Marken oder Logos nachbauen.

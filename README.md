@@ -3,10 +3,11 @@
 Einfacher Dokumentenscanner für Android.
 
 - **Scannen:** Kamera über ein Blatt halten, die Seitenränder werden automatisch erkannt. Danach lässt sich der Ausschnitt von Hand korrigieren, drehen und ein Filter (z. B. Schwarzweiß) wählen. Mehrere Seiten landen in einem PDF. Bilder aus der Galerie gehen auch.
-- **Speichern:** als PDF im **Download-Ordner** oder in einem **selbst gewählten Ordner** auf dem Telefon (oben auf „Speicherort“ tippen). Vor dem Speichern lässt sich der Dateiname ändern.
+- **Speichern:** als PDF im **Download-Ordner**, in einem **selbst gewählten Ordner** auf dem Telefon oder direkt auf **Nextcloud / WebDAV** (oben auf „Speicherort“ tippen). Vor dem Speichern lassen sich Dateiname und Ziel ändern.
+- **Nextcloud / WebDAV:** Server-Adresse, Benutzername, Passwort und Ordner eintragen, „Prüfen und speichern“ tippen. Bei Nextcloud genügt die normale Adresse (z. B. `cloud.example.de`), die App ergänzt `/remote.php/dav/files/<Benutzer>/`. Am besten ein App-Passwort nehmen (Nextcloud → Persönliche Einstellungen → Sicherheit). Meldest du dich mit E-Mail an, trag die vollständige WebDAV-Adresse aus Nextcloud (Dateien → Einstellungen → WebDAV) als Server-Adresse ein. Fehlt der Ordner, wird er angelegt. Gleichnamige Dateien werden nicht überschrieben, sondern bekommen „(1)“, „(2)“ … angehängt. Das Passwort liegt verschlüsselt im Android-Keystore. Hochgeladene Scans öffnen sich aus der Liste im Browser; Teilen schickt den Link.
 - **Zuletzt gespeichert:** Antippen öffnet das PDF, das Teilen-Symbol schickt es weiter.
 
-Der Scanner kommt aus den Google-Play-Diensten (ML Kit Document Scanner). Er braucht ein Gerät mit Google-Play-Diensten und beim ersten Start einmal Internet, um das Scan-Modul zu laden. Die App selbst braucht keine Berechtigungen und schickt nichts ins Netz.
+Der Scanner kommt aus den Google-Play-Diensten (ML Kit Document Scanner). Er braucht ein Gerät mit Google-Play-Diensten und beim ersten Start einmal Internet, um das Scan-Modul zu laden. Die App braucht nur die Internet-Berechtigung, und die nur für Nextcloud/WebDAV. Sonst geht nichts ins Netz.
 
 ## Installation
 
@@ -37,4 +38,4 @@ Lokal bauen: `gradle testDebugUnitTest assembleDebug` (Gradle 9.8, JDK 17, Andro
 
 ## Technik
 
-Kotlin, Jetpack Compose, Material 3, DataStore, ML Kit Document Scanner. minSdk 29.
+Kotlin, Jetpack Compose, Material 3, DataStore, ML Kit Document Scanner, OkHttp (WebDAV). minSdk 29.
