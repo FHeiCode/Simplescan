@@ -5,6 +5,9 @@ import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
+import android.os.Build
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
@@ -517,10 +520,14 @@ private fun WebDavDialog(
 
 /**
  * Direkt per E-Mail senden: lokal gespeicherte PDFs als Anhang, hochgeladene als Link.
- * Der „mailto:“-Selektor sorgt dafür, dass nur E-Mail-Apps angeboten werden.
+ *
+ * Issue #3: Vorher lief der Anhang-Versand über ACTION_SEND mit einem „mailto:“-Selektor. Diesen Trick
+ * unterstützen nicht alle Mail-Apps (die App, die „mailto:“ annimmt, muss auch ACTION_SEND mit Anhang
+ * im selben Fenster annehmen); dann warf Android „ActivityNotFound“, obwohl Mail-Apps installiert waren.
+ * Jetzt suchen wir die Mail-Apps selbst (alle, die „mailto:“ öffnen) und schicken den Anhang gezielt
+ * an die, die auch PDFs annehmen. Findet sich keine, kommt das normale Teilen-Menü statt einer Fehlermeldung.
  */
 private fun sendEmail(context: Context, scan: SavedScan, vm: ScanViewModel) {
-    val mailOnly = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
     if (isRemote(scan)) {
         vm.linkFor(scan) { link, needsLogin ->
             val hint = if (needsLogin) "\n\n(Zum Öffnen sind Zugangsdaten für den Server nötig.)" else ""
@@ -530,27 +537,67 @@ private fun sendEmail(context: Context, scan: SavedScan, vm: ScanViewModel) {
             val mail = Intent(Intent.ACTION_SENDTO, mailto)
                 .putExtra(Intent.EXTRA_SUBJECT, scan.name)
                 .putExtra(Intent.EXTRA_TEXT, body)
-            startMail(context, mail, vm)
+            val fallback = Intent(Intent.ACTION_SEND).setType("text/plain")
+                .putExtra(Intent.EXTRA_SUBJECT, scan.name)
+                .putExtra(Intent.EXTRA_TEXT, body)
+            startMail(context, listOf(mail), fallback, vm)
         }
         return
     }
     if (!exists(context, scan, vm)) return
     val uri = Uri.parse(scan.uri)
-    val mail = Intent(Intent.ACTION_SEND)
+    fun attachment() = Intent(Intent.ACTION_SEND)
         .setType("application/pdf")
         .putExtra(Intent.EXTRA_STREAM, uri)
         .putExtra(Intent.EXTRA_SUBJECT, scan.name)
         .putExtra(Intent.EXTRA_TEXT, "Anbei der Scan „${scan.name}“.")
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-    mail.clipData = ClipData.newRawUri(scan.name, uri)
-    mail.selector = mailOnly
-    startMail(context, mail, vm)
+        .also { it.clipData = ClipData.newRawUri(scan.name, uri) }
+
+    val targets = mailPackages(context)
+        .map { pkg -> attachment().setPackage(pkg) }
+        .filter { canHandle(context, it) }
+    startMail(context, targets, attachment(), vm)
 }
 
-private fun startMail(context: Context, intent: Intent, vm: ScanViewModel) {
+/** Pakete aller Apps, die „mailto:“ öffnen, also E-Mail-Apps. Braucht den <queries>-Eintrag im Manifest. */
+private fun mailPackages(context: Context): List<String> =
+    queryActivities(context, Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:")))
+        .map { it.activityInfo.packageName }
+        .distinct()
+        .filter { it != context.packageName }
+
+private fun canHandle(context: Context, intent: Intent) = queryActivities(context, intent).isNotEmpty()
+
+@Suppress("DEPRECATION")
+private fun queryActivities(context: Context, intent: Intent): List<ResolveInfo> {
+    val pm = context.packageManager
+    return if (Build.VERSION.SDK_INT >= 33) {
+        pm.queryIntentActivities(intent, PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong()))
+    } else {
+        pm.queryIntentActivities(intent, PackageManager.MATCH_DEFAULT_ONLY)
+    }
+}
+
+/**
+ * Eine Mail-App → direkt öffnen. Mehrere → Auswahl nur mit diesen Apps.
+ * Keine (oder Start scheitert) → normales Teilen-Menü mit [fallback], damit der Nutzer nie festhängt.
+ */
+private fun startMail(context: Context, targets: List<Intent>, fallback: Intent, vm: ScanViewModel) {
     try {
-        context.startActivity(intent)
+        when (targets.size) {
+            0 -> context.startActivity(Intent.createChooser(fallback, "Senden mit"))
+            1 -> context.startActivity(targets[0])
+            else -> context.startActivity(
+                Intent.createChooser(targets[0], "Per E-Mail senden")
+                    .putExtra(Intent.EXTRA_INITIAL_INTENTS, targets.drop(1).toTypedArray())
+            )
+        }
     } catch (e: ActivityNotFoundException) {
-        vm.show("Keine E-Mail-App gefunden.")
+        try {
+            context.startActivity(Intent.createChooser(fallback, "Senden mit"))
+        } catch (e2: ActivityNotFoundException) {
+            vm.show("Keine App zum Versenden gefunden.")
+        }
     }
 }
