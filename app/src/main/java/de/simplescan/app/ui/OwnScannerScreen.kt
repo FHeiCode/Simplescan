@@ -140,7 +140,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
         busyId = page.id
         scope.launch {
             try {
-                session.replace(PageRenderer.render(context, page.id, page.photo, quad, rotation, filter))
+                session.replace(PageRenderer.render(context, page.id, page.photo, quad, rotation, filter, page.focalRatio))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -159,7 +159,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                 if (page.filter == filter) continue
                 busyId = page.id
                 try {
-                    session.replace(PageRenderer.render(context, page.id, page.photo, page.quad, page.rotation, filter))
+                    session.replace(PageRenderer.render(context, page.id, page.photo, page.quad, page.rotation, filter, page.focalRatio))
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -183,7 +183,8 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                             runCatching { PageDetector.detect(bmp, 900) ?: PageDetector.detect(bmp, 480) }.getOrNull()
                         val photo = PageRenderer.savePhoto(context, bmp)
                         bmp.recycle()
-                        PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter)
+                        // Galerie: Brennweite unbekannt → typischer Handywert
+                        PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter, null)
                     }
                     session.pages.add(page)
                 } catch (e: CancellationException) {
@@ -340,6 +341,8 @@ private fun CameraArea(
     }
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    // Brennweite der Kamera (für das echte Seitenverhältnis schräg fotografierter Seiten)
+    var focalRatio by remember { mutableStateOf<Double?>(null) }
     var flash by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -388,6 +391,8 @@ private fun CameraArea(
             } else {
                 provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
             }
+            focalRatio = camera?.let { cameraFocalRatio(it) }
+            Log.i("Simplescan", "Brennweite je Pixel: $focalRatio")
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -448,7 +453,7 @@ private fun CameraArea(
                                 // Originalfoto behalten (für späteres Nachbessern der Ecken), dann Seite berechnen.
                                 val photo = PageRenderer.savePhoto(context, bmp)
                                 bmp.recycle()
-                                PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter) to (quad != null)
+                                PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter, focalRatio) to (quad != null)
                             }
                             pages.add(scanPage)
                             lastDetected = detected
@@ -582,6 +587,20 @@ private fun CameraArea(
         }
     }
 }
+
+/**
+ * Brennweite geteilt durch die lange Sensorkante (aus den Kameradaten). Mal die lange Fotokante in Pixeln
+ * ergibt die Brennweite in Pixeln. Null, wenn das Gerät die Daten nicht liefert oder sie unplausibel sind.
+ */
+@androidx.annotation.OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
+private fun cameraFocalRatio(camera: Camera): Double? = runCatching {
+    val info = androidx.camera.camera2.interop.Camera2CameraInfo.from(camera.cameraInfo)
+    val focal = info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
+        ?.firstOrNull() ?: return@runCatching null
+    val sensor = info.getCameraCharacteristic(android.hardware.camera2.CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+        ?: return@runCatching null
+    (focal / kotlin.math.max(sensor.width, sensor.height)).toDouble().takeIf { it in 0.4..2.0 }
+}.getOrNull()
 
 /** Kamera-Dienst holen, ohne den Haupt-Thread zu blockieren. */
 private suspend fun cameraProvider(context: android.content.Context): ProcessCameraProvider =

@@ -87,8 +87,10 @@ object PageDetector {
      * Schneidet das Viereck aus und zieht es gerade (Perspektive entzerren), im echten Seitenverhältnis
      * (siehe QuadMath.correctedSize). Ringsum fällt ein schmaler Rand weg, damit kein Streifen vom Untergrund bleibt.
      */
-    fun warp(photo: Bitmap, ordered: List<Pt>, marginRatio: Double = 0.008): Bitmap {
-        val (w, h) = QuadMath.correctedSize(ordered, photo.width, photo.height)
+    fun warp(photo: Bitmap, ordered: List<Pt>, focalRatio: Double? = null, marginRatio: Double = 0.008): Bitmap {
+        // focalRatio: Brennweite je Pixel der langen Bildkante (aus den Kameradaten), für das echte Seitenverhältnis.
+        val focalPx = focalRatio?.let { it * max(photo.width, photo.height) }
+        val (w, h) = QuadMath.correctedSize(ordered, photo.width, photo.height, focalPx)
         val src = MatOfPoint2f(*ordered.map { Point(it.x, it.y) }.toTypedArray())
         val dst = MatOfPoint2f(
             Point(0.0, 0.0), Point(w - 1.0, 0.0), Point(w - 1.0, h - 1.0), Point(0.0, h - 1.0),

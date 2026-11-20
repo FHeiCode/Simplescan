@@ -70,14 +70,21 @@ object QuadMath {
         return w.roundToInt().coerceAtLeast(1) to h.roundToInt().coerceAtLeast(1)
     }
 
+    /** Typische Handy-Hauptkamera: Brennweite ≈ 0,75 × lange Bildkante (entspricht etwa 26 mm Kleinbild). */
+    const val TYPICAL_FOCAL_RATIO = 0.75
+
     /**
      * Echtes Seitenverhältnis (Breite/Höhe) des fotografierten Rechtecks, aus der perspektivischen Verzerrung
      * der vier Ecken berechnet (Verfahren nach Zhang & He, „Whiteboard scanning“). Die Bildmitte gilt als
      * optische Achse. Grund: Ein schräg fotografiertes Blatt wirkt verkürzt; die reinen Kantenlängen ergäben
-     * ein falsches Format (Seite zu breit). Null, wenn das Foto fast frontal ist oder die Rechnung instabil wird –
-     * dann stimmen die gemessenen Kanten ohnehin.
+     * ein falsches Format (Seite zu breit).
+     *
+     * [focalPx]: Brennweite in Pixeln, wenn bekannt (aus den Kameradaten). Sonst wird sie aus den Ecken
+     * geschätzt – das geht aber nicht, wenn das Handy nur nach vorn gekippt ist (obere und untere Kante
+     * bleiben parallel; der häufigste Fall). Dann gilt ein typischer Handywert ([TYPICAL_FOCAL_RATIO]).
+     * Null nur bei unbrauchbaren Ecken.
      */
-    fun trueAspect(ordered: List<Pt>, imageWidth: Int, imageHeight: Int): Double? {
+    fun trueAspect(ordered: List<Pt>, imageWidth: Int, imageHeight: Int, focalPx: Double? = null): Double? {
         val (tl, tr, br, bl) = ordered
         val cx = imageWidth / 2.0
         val cy = imageHeight / 2.0
@@ -92,18 +99,22 @@ object QuadMath {
         val k3 = dot(cross(m1, m4), m2) / d3
         val n2 = DoubleArray(3) { k2 * m2[it] - m1[it] }
         val n3 = DoubleArray(3) { k3 * m3[it] - m1[it] }
-        // Fast frontal: Fluchtpunkte im Unendlichen, Brennweite nicht bestimmbar.
         val longEdge = max(imageWidth, imageHeight).toDouble()
+        val f = focalPx?.takeIf { it > 0 } ?: estimateFocal(n2, n3, longEdge) ?: (TYPICAL_FOCAL_RATIO * longEdge)
+        val f2 = f * f
+        val num = (n2[0] * n2[0] + n2[1] * n2[1]) / f2 + n2[2] * n2[2]
+        val den = (n3[0] * n3[0] + n3[1] * n3[1]) / f2 + n3[2] * n3[2]
+        if (num <= 0 || den <= 0) return null
+        return kotlin.math.sqrt(num / den)
+    }
+
+    /** Brennweite aus den Fluchtpunkten schätzen; null, wenn nicht bestimmbar oder unplausibel. */
+    private fun estimateFocal(n2: DoubleArray, n3: DoubleArray, longEdge: Double): Double? {
         if (abs(n2[2]) < 1e-3 || abs(n3[2]) < 1e-3) return null
         val f2 = -(n2[0] * n3[0] + n2[1] * n3[1]) / (n2[2] * n3[2])
         if (f2.isNaN() || f2 <= 0) return null
         val f = kotlin.math.sqrt(f2)
-        // Unplausible Brennweite (Handykameras liegen etwa bei 0,6–1,6 × lange Bildkante) → lieber messen.
-        if (f < 0.3 * longEdge || f > 4.0 * longEdge) return null
-        val num = (n2[0] * n2[0] + n2[1] * n2[1]) / f2 + n2[2] * n2[2]
-        val den = (n3[0] * n3[0] + n3[1] * n3[1]) / f2 + n3[2] * n3[2]
-        if (den <= 0) return null
-        return kotlin.math.sqrt(num / den)
+        return f.takeIf { it in 0.3 * longEdge..4.0 * longEdge }
     }
 
     private const val A4 = 0.70710678118654752 // 1 / √2
@@ -119,9 +130,9 @@ object QuadMath {
      * Größe des entzerrten Bildes mit richtigem Seitenverhältnis: Fläche wie gemessen,
      * Format aus [trueAspect] (gemessenes Format, wenn das nicht geht), nahe A4 → genau A4.
      */
-    fun correctedSize(ordered: List<Pt>, imageWidth: Int, imageHeight: Int): Pair<Int, Int> {
+    fun correctedSize(ordered: List<Pt>, imageWidth: Int, imageHeight: Int, focalPx: Double? = null): Pair<Int, Int> {
         val (mw, mh) = outputSize(ordered)
-        val ratio = snapToA4(trueAspect(ordered, imageWidth, imageHeight) ?: (mw.toDouble() / mh))
+        val ratio = snapToA4(trueAspect(ordered, imageWidth, imageHeight, focalPx) ?: (mw.toDouble() / mh))
         val h = kotlin.math.sqrt(mw.toDouble() * mh / ratio)
         return (h * ratio).roundToInt().coerceAtLeast(1) to h.roundToInt().coerceAtLeast(1)
     }

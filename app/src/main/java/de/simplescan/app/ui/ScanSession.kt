@@ -32,6 +32,8 @@ data class ScanPage(
     val quad: List<Pt>?,
     val rotation: Int,
     val filter: PageFilter,
+    /** Brennweite je Pixel der langen Bildkante (Kameradaten), null = unbekannt (z. B. Galerie). */
+    val focalRatio: Double?,
     val rendered: File,
     val thumb: ImageBitmap,
 )
@@ -88,9 +90,9 @@ object PageRenderer {
     }
 
     /** Seite als Bild berechnen (zuschneiden, entzerren, Filter, drehen), ohne zu speichern. */
-    fun pageBitmap(photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter): Bitmap {
+    fun pageBitmap(photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter, focalRatio: Double?): Bitmap {
         val src = BitmapFactory.decodeFile(photo.absolutePath) ?: throw java.io.IOException("Foto nicht lesbar")
-        var page = if (quad != null) PageDetector.warp(src, quad).also { src.recycle() } else src
+        var page = if (quad != null) PageDetector.warp(src, quad, focalRatio).also { src.recycle() } else src
         if (filter != PageFilter.ORIGINAL) {
             page = ImageFilters.apply(page, filter).also { page.recycle() }
         }
@@ -103,18 +105,18 @@ object PageRenderer {
 
     /** Fertige Seite aus Foto, Ecken und Drehung erzeugen (zuschneiden, entzerren, drehen). */
     suspend fun render(
-        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter,
+        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter, focalRatio: Double?,
     ): ScanPage = withContext(Dispatchers.Default) {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(photo.absolutePath, bounds)
         val pw = bounds.outWidth
         val ph = bounds.outHeight
-        val page = pageBitmap(photo, quad, rotation, filter)
+        val page = pageBitmap(photo, quad, rotation, filter, focalRatio)
         // Schwarzweiß mit weniger Kompression, sonst zeigen sich Artefakte an den Buchstabenkanten.
         val rendered = PdfBuilder.savePage(context, page, quality = if (filter == PageFilter.BW) 95 else 85)
         val thumb = Bitmap.createScaledBitmap(page, 240, (240f * page.height / page.width).toInt().coerceAtLeast(1), true)
         page.recycle()
-        ScanPage(id, photo, pw, ph, quad, rotation, filter, rendered, thumb.asImageBitmap())
+        ScanPage(id, photo, pw, ph, quad, rotation, filter, focalRatio, rendered, thumb.asImageBitmap())
     }
 }
 
