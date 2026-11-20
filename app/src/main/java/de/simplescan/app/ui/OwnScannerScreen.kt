@@ -87,6 +87,7 @@ import de.simplescan.app.data.PageDetector
 import de.simplescan.app.data.PdfPages
 import de.simplescan.app.data.Pt
 import de.simplescan.app.data.QuadMath
+import de.simplescan.app.data.QuadStabilizer
 import java.util.concurrent.Executors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -220,8 +221,7 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady
             val preview = Preview.Builder().setResolutionSelector(ratio43).build()
                 .also { it.setSurfaceProvider(previewView.surfaceProvider) }
             if (openCvReady) {
-                var missing = 0
-                var smoothed: List<Pt>? = null
+                val stabilizer = QuadStabilizer()
                 analysis.setAnalyzer(analysisExecutor) { image ->
                     try {
                         val plane = image.planes[0]
@@ -232,13 +232,7 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady
                         val h = gray.rows().toDouble()
                         val quad = PageDetector.detect(gray)?.map { Pt(it.x / w, it.y / h) }
                         gray.release()
-                        if (quad != null) {
-                            missing = 0
-                            smoothed = QuadMath.smooth(smoothed, quad)
-                        } else if (++missing > 4) {
-                            smoothed = null
-                        }
-                        val show = smoothed
+                        val show = stabilizer.update(quad)
                         val aspect = (w / h).toFloat()
                         ContextCompat.getMainExecutor(context).execute { liveQuad = show; liveAspect = aspect }
                     } catch (e: Exception) {
