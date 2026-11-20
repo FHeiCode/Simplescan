@@ -83,9 +83,12 @@ object PageDetector {
         }
     }
 
-    /** Schneidet das Viereck aus und zieht es gerade (Perspektive entzerren). */
-    fun warp(photo: Bitmap, ordered: List<Pt>): Bitmap {
-        val (w, h) = QuadMath.outputSize(ordered)
+    /**
+     * Schneidet das Viereck aus und zieht es gerade (Perspektive entzerren), im echten Seitenverhältnis
+     * (siehe QuadMath.correctedSize). Ringsum fällt ein schmaler Rand weg, damit kein Streifen vom Untergrund bleibt.
+     */
+    fun warp(photo: Bitmap, ordered: List<Pt>, marginRatio: Double = 0.008): Bitmap {
+        val (w, h) = QuadMath.correctedSize(ordered, photo.width, photo.height)
         val src = MatOfPoint2f(*ordered.map { Point(it.x, it.y) }.toTypedArray())
         val dst = MatOfPoint2f(
             Point(0.0, 0.0), Point(w - 1.0, 0.0), Point(w - 1.0, h - 1.0), Point(0.0, h - 1.0),
@@ -96,9 +99,12 @@ object PageDetector {
         try {
             Utils.bitmapToMat(photo, input)
             Imgproc.warpPerspective(input, output, m, Size(w.toDouble(), h.toDouble()), Imgproc.INTER_LINEAR)
-            val result = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            Utils.matToBitmap(output, result)
-            return result
+            val full = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            Utils.matToBitmap(output, full)
+            val dx = (w * marginRatio).toInt()
+            val dy = (h * marginRatio).toInt()
+            if (dx == 0 && dy == 0) return full
+            return Bitmap.createBitmap(full, dx, dy, w - 2 * dx, h - 2 * dy).also { if (it !== full) full.recycle() }
         } finally {
             src.release(); dst.release(); m.release(); input.release(); output.release()
         }

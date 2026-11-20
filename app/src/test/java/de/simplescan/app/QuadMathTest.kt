@@ -48,3 +48,40 @@ class QuadMathTest {
         assertEquals(b, QuadMath.smooth(null, b))
     }
 }
+
+class AspectTest {
+    // A4-Blatt (210 × 297), 35° nach hinten gekippt, leicht gedreht, mit f = 1500 px auf ein 4000 × 3000-Foto projiziert.
+    private val tilted = listOf(
+        Pt(1718.961, 1115.674), Pt(2315.378, 1174.239), Pt(2225.605, 1808.518), Pt(1776.359, 1731.004),
+    )
+
+    @Test
+    fun recoversA4FromTiltedPhoto() {
+        val r = QuadMath.trueAspect(tilted, 4000, 3000)!!
+        org.junit.Assert.assertEquals(210.0 / 297.0, r, 0.002)
+        // Gemessene Kanten allein lägen deutlich daneben (Seite wirkt verkürzt).
+        val (mw, mh) = QuadMath.outputSize(tilted)
+        org.junit.Assert.assertTrue(mw.toDouble() / mh > 0.85)
+    }
+
+    @Test
+    fun correctedSizeHasA4Ratio() {
+        val (w, h) = QuadMath.correctedSize(tilted, 4000, 3000)
+        org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
+    }
+
+    @Test
+    fun frontalPhotoFallsBackToMeasuredEdges() {
+        val frontal = listOf(Pt(100.0, 100.0), Pt(310.0, 100.0), Pt(310.0, 397.0), Pt(100.0, 397.0))
+        org.junit.Assert.assertNull(QuadMath.trueAspect(frontal, 400, 500))
+        val (w, h) = QuadMath.correctedSize(frontal, 400, 500)
+        org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
+    }
+
+    @Test
+    fun snapsOnlyNearA4() {
+        org.junit.Assert.assertEquals(1 / Math.sqrt(2.0), QuadMath.snapToA4(0.69), 1e-9)
+        org.junit.Assert.assertEquals(0.77, QuadMath.snapToA4(0.77), 1e-9) // US-Letter bleibt
+        org.junit.Assert.assertEquals(Math.sqrt(2.0), QuadMath.snapToA4(1.40), 1e-9)
+    }
+}
