@@ -4,6 +4,9 @@
     <!-- Kamera läuft im Scanner der Google-Play-Dienste, lokal gespeichert wird über MediaStore
          (Download) bzw. den Ordnerauswahl-Dialog. Internet nur für Nextcloud/WebDAV. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Kamera für den Scanner. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Issue #3: Ab Android 11 sieht die App andere Apps nur, wenn sie hier angemeldet sind.
          Gebraucht, um E-Mail-Apps (mailto:) zu finden und zu prüfen, ob sie PDF-Anhänge annehmen. -->
@@ -24,6 +27,7 @@
 
     <application
         android:allowBackup="false"
+        android:largeHeap="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
@@ -40,10 +44,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Scanner-Modell beim Installieren gleich mitladen, damit der erste Scan schneller startet -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="document_scanner" />
     </application>
 </manifest>

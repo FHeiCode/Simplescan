@@ -79,6 +79,22 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _linkBusy = MutableStateFlow(false)
     val linkBusy: StateFlow<Boolean> = _linkBusy.asStateFlow()
 
+    /** Scanner: Seitenfotos zu einem PDF machen, dann wie gewohnt der Speichern-Dialog. */
+    fun onOwnScanFinished(pages: List<java.io.File>) {
+        if (pages.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                val pdf = de.simplescan.app.data.PdfBuilder.build(getApplication(), pages)
+                pages.forEach { it.delete() }
+                onScanned(Uri.fromFile(pdf), pages.size)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                show("PDF konnte nicht erstellt werden: ${e.message ?: "unbekannter Fehler"}")
+            }
+        }
+    }
+
     fun onScanned(pdfUri: Uri, pages: Int) {
         _pending.value = PendingScan(pdfUri, pages, FileNames.suggestion())
     }

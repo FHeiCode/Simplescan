@@ -70,6 +70,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -98,9 +99,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import de.simplescan.app.data.DavKind
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.Target
@@ -143,6 +141,10 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 
     var showTargetDialog by remember { mutableStateOf(false) }
     var showEmailDialog by remember { mutableStateOf(false) }
+    var showOwnScanner by rememberSaveable { mutableStateOf(false) }
+    val appVersion = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
+    }
     val defaultEmail by vm.defaultEmail.collectAsStateWithLifecycle()
 
     // Mehrfachauswahl: Adressen der ausgewählten Einträge. Leer = normale Ansicht.
@@ -163,16 +165,17 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     val davBusy by vm.davBusy.collectAsStateWithLifecycle()
     val davError by vm.davError.collectAsStateWithLifecycle()
 
-    // Ergebnis des Scanners: fertiges PDF im App-Cache, das wir danach an den Speicherort kopieren.
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        if (res.resultCode == Activity.RESULT_OK) {
-            val pdf = GmsDocumentScanningResult.fromActivityResultIntent(res.data)?.pdf
-            if (pdf != null) vm.onScanned(pdf.uri, pdf.pageCount) else vm.show("Der Scanner hat kein PDF geliefert.")
-        }
-    }
-
     val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.useFolder(uri)
+    }
+
+    // Scanner als Vollbild statt der Startseite.
+    if (showOwnScanner) {
+        OwnScannerScreen(
+            onDone = { pages -> showOwnScanner = false; vm.onOwnScanFinished(pages) },
+            onClose = { showOwnScanner = false },
+        )
+        return
     }
 
     Scaffold(
@@ -212,22 +215,30 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
+            // Großer Scannen-Knopf im Kopf-Grün mit dem App-Logo.
             if (!selecting) ExtendedFloatingActionButton(
-                onClick = { startScan(context, scanLauncher, vm) },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
-                text = { Text("Scannen") },
+                onClick = { showOwnScanner = true },
+                containerColor = StageGreen,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.height(72.dp),
+                icon = {
+                    Image(
+                        painter = painterResource(R.drawable.ic_launcher_foreground),
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                    )
+                },
+                text = { Text("Scannen", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            // Kein seitlicher Abstand: Speicherort-Karte ist so breit wie der grüne Kopf.
-            contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+        // Fest stehender Teil (Speicherort, E-Mail, Scanner, Überschrift); nur die Dateiliste darunter scrollt.
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Card(
                     onClick = { showTargetDialog = true },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -246,7 +257,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Card(
                     onClick = { showEmailDialog = true },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -271,7 +282,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
                     "Zuletzt gespeichert",
@@ -289,6 +300,11 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                // Platz unten, damit der große Scannen-Knopf nichts verdeckt.
+                contentPadding = PaddingValues(bottom = 112.dp),
+            ) {
             if (recent.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp), contentAlignment = Alignment.Center) {
@@ -312,6 +328,17 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                     )
                     HorizontalDivider()
                 }
+            }
+            // Unauffällig ganz unten: Version und Autor.
+            item {
+                Text(
+                    "Simplescan $appVersion · FHeiCode",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                )
+            }
             }
         }
     }
@@ -531,21 +558,6 @@ private fun SaveDialog(
         },
         dismissButton = { TextButton(onClick = onDiscard, enabled = !saving) { Text("Verwerfen") } },
     )
-}
-
-private fun startScan(context: Context, launcher: ActivityResultLauncher<IntentSenderRequest>, vm: ScanViewModel) {
-    val activity = context as? Activity ?: return
-    val options = GmsDocumentScannerOptions.Builder()
-        .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL) // Erkennen, Zuschneiden, Filter
-        .setGalleryImportAllowed(true)
-        .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
-        .build()
-    GmsDocumentScanning.getClient(options)
-        .getStartScanIntent(activity)
-        .addOnSuccessListener { sender -> launcher.launch(IntentSenderRequest.Builder(sender).build()) }
-        .addOnFailureListener { e ->
-            vm.show("Scanner startet nicht (Google-Play-Dienste nötig, beim ersten Mal Internet): ${e.localizedMessage ?: e}")
-        }
 }
 
 /** Prüft, ob die Datei noch da ist; sonst verschwindet sie aus der Liste. */

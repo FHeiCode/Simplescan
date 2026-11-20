@@ -19,12 +19,14 @@ val releaseVersion: String? = System.getenv("RELEASE_VERSION")?.takeIf { it.isNo
 
 android {
     namespace = "de.simplescan.app"
-    compileSdk = 35
+    compileSdk = 36 // CameraX 1.6 verlangt mindestens 36 zum Kompilieren
 
     defaultConfig {
         applicationId = "de.simplescan.app"
         // Android 10+: Speichern in „Download“ ohne Speicherberechtigung (MediaStore)
         minSdk = 29
+        // Nur die Prozessortypen echter Handys, damit OpenCV die APK nicht unnötig aufbläht.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         targetSdk = 35
         versionCode = if (runNumber != null) 100 + runNumber else 1
         versionName = releaseVersion ?: if (runNumber != null) "$baseVersion-build$runNumber" else baseVersion
@@ -89,12 +91,15 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Scanner: Kamera (CameraX) und Bildverarbeitung (OpenCV: Seitenerkennung, Entzerren, Filter)
+    val cameraX = "1.6.2"
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+    implementation("org.opencv:opencv:4.14.0")
+
     // Hochladen zu Nextcloud/WebDAV (eigene Methoden wie PROPFIND und MKCOL)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // Google ML Kit Dokumentenscanner: Kamera, Seitenerkennung, Zuschneiden, Filter, PDF.
-    // Läuft über die Google-Play-Dienste, braucht keine Kameraberechtigung in der App.
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
