@@ -25,6 +25,8 @@ android {
         applicationId = "de.simplescan.app"
         // Android 10+: Speichern in „Download“ ohne Speicherberechtigung (MediaStore)
         minSdk = 29
+        // Nur die Prozessortypen echter Handys, damit OpenCV die APK nicht unnötig aufbläht.
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
         targetSdk = 35
         versionCode = if (runNumber != null) 100 + runNumber else 1
         versionName = releaseVersion ?: if (runNumber != null) "$baseVersion-build$runNumber" else baseVersion
@@ -89,6 +91,13 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    // Versuch eigener Scanner: Kamera (CameraX) und Bildverarbeitung (OpenCV, ab Schritt 2 für die Seitenerkennung)
+    val cameraX = "1.6.2"
+    implementation("androidx.camera:camera-camera2:$cameraX")
+    implementation("androidx.camera:camera-lifecycle:$cameraX")
+    implementation("androidx.camera:camera-view:$cameraX")
+    implementation("org.opencv:opencv:4.14.0")
+
     // Hochladen zu Nextcloud/WebDAV (eigene Methoden wie PROPFIND und MKCOL)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
 

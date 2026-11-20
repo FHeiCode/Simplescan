@@ -87,6 +87,7 @@ class SettingsStore(private val context: Context) {
     private val keyTreeLabel = stringPreferencesKey("tree_label")
     private val keyRecent = stringPreferencesKey("recent")
     private val keyDefaultEmail = stringPreferencesKey("default_email")
+    private val keyOwnScanner = stringPreferencesKey("own_scanner")
     private val keyDavKind = stringPreferencesKey("dav_kind")
     private val keyDavServer = stringPreferencesKey("dav_server")
     private val keyDavUser = stringPreferencesKey("dav_user")
@@ -149,6 +150,13 @@ class SettingsStore(private val context: Context) {
             val list = ScanListCodec.decode(p[keyRecent]).filterNot { it.uri == scan.uri }
             p[keyRecent] = ScanListCodec.encode(listOf(scan) + list)
         }
+    }
+
+    /** Versuch: eigener Scanner statt Google-Scanner. */
+    val ownScanner: Flow<Boolean> = context.dataStore.data.map { it[keyOwnScanner] == "1" }
+
+    suspend fun setOwnScanner(on: Boolean) {
+        context.dataStore.edit { it[keyOwnScanner] = if (on) "1" else "0" }
     }
 
     /** Feste Empfänger für den E-Mail-Versand, „“ = keine. */

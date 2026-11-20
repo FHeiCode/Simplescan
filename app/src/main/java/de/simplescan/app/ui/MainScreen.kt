@@ -70,6 +70,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.Switch
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
@@ -143,6 +144,8 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 
     var showTargetDialog by remember { mutableStateOf(false) }
     var showEmailDialog by remember { mutableStateOf(false) }
+    val ownScanner by vm.ownScanner.collectAsStateWithLifecycle()
+    var showOwnScanner by rememberSaveable { mutableStateOf(false) }
     val defaultEmail by vm.defaultEmail.collectAsStateWithLifecycle()
 
     // Mehrfachauswahl: Adressen der ausgewählten Einträge. Leer = normale Ansicht.
@@ -173,6 +176,15 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 
     val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.useFolder(uri)
+    }
+
+    // Versuch: eigener Scanner als Vollbild statt der Startseite.
+    if (showOwnScanner) {
+        OwnScannerScreen(
+            onDone = { pages -> showOwnScanner = false; vm.onOwnScanFinished(pages) },
+            onClose = { showOwnScanner = false },
+        )
+        return
     }
 
     Scaffold(
@@ -213,7 +225,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
             if (!selecting) ExtendedFloatingActionButton(
-                onClick = { startScan(context, scanLauncher, vm) },
+                onClick = { if (ownScanner) showOwnScanner = true else startScan(context, scanLauncher, vm) },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
@@ -267,6 +279,28 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                             )
                         }
                         TextButton(onClick = { showEmailDialog = true }) { Text(if (defaultEmail.isBlank()) "Festlegen" else "Ändern") }
+                    }
+                }
+            }
+
+            item {
+                Card(
+                    onClick = { vm.setOwnScanner(!ownScanner) },
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+                    shape = RoundedCornerShape(28.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.DocumentScanner, contentDescription = null)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Scanner", style = MaterialTheme.typography.labelMedium)
+                            Text(
+                                if (ownScanner) "Eigener Scanner (Test)" else "Google-Scanner",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                        Switch(checked = ownScanner, onCheckedChange = { vm.setOwnScanner(it) })
                     }
                 }
             }

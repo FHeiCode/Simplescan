@@ -4,6 +4,9 @@
     <!-- Kamera läuft im Scanner der Google-Play-Dienste, lokal gespeichert wird über MediaStore
          (Download) bzw. den Ordnerauswahl-Dialog. Internet nur für Nextcloud/WebDAV. -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Nur für den eigenen Scanner (Versuch); der Google-Scanner braucht sie nicht. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Issue #3: Ab Android 11 sieht die App andere Apps nur, wenn sie hier angemeldet sind.
          Gebraucht, um E-Mail-Apps (mailto:) zu finden und zu prüfen, ob sie PDF-Anhänge annehmen. -->
