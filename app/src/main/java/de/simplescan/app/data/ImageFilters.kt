@@ -31,10 +31,18 @@ object ImageFilters {
                     Imgproc.cvtColor(out, out, Imgproc.COLOR_GRAY2RGBA)
                 }
                 PageFilter.BW -> {
+                    // Weiches Schwarzweiß: statt hartem Schwellwert (Treppenkanten, Krümel) ein schmaler
+                    // Übergang um die Otsu-Schwelle – Papier rein weiß, Schrift schwarz, Kanten glatt.
                     val gray = Mat()
+                    val tmp = Mat()
                     Imgproc.cvtColor(even, gray, Imgproc.COLOR_RGB2GRAY)
-                    Imgproc.adaptiveThreshold(gray, out, 255.0, Imgproc.ADAPTIVE_THRESH_GAUSSIAN_C, Imgproc.THRESH_BINARY, 31, 12.0)
-                    gray.release()
+                    Imgproc.GaussianBlur(gray, gray, Size(3.0, 3.0), 0.0)
+                    val t = Imgproc.threshold(gray, tmp, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
+                    tmp.release()
+                    val lut = Mat(1, 256, org.opencv.core.CvType.CV_8UC1)
+                    lut.put(0, 0, BwCurve.table(t))
+                    Core.LUT(gray, lut, out)
+                    lut.release(); gray.release()
                     Imgproc.cvtColor(out, out, Imgproc.COLOR_GRAY2RGBA)
                 }
                 PageFilter.ORIGINAL -> Unit

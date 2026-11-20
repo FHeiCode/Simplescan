@@ -102,7 +102,8 @@ object PageRenderer {
             val m = Matrix().apply { postRotate(rotation.toFloat()) }
             page = Bitmap.createBitmap(page, 0, 0, page.width, page.height, m, true).also { if (it !== page) page.recycle() }
         }
-        val rendered = PdfBuilder.savePage(context, page)
+        // Schwarzweiß mit weniger Kompression, sonst zeigen sich Artefakte an den Buchstabenkanten.
+        val rendered = PdfBuilder.savePage(context, page, quality = if (filter == PageFilter.BW) 95 else 85)
         val thumb = Bitmap.createScaledBitmap(page, 240, (240f * page.height / page.width).toInt().coerceAtLeast(1), true)
         page.recycle()
         ScanPage(id, photo, pw, ph, quad, rotation, filter, rendered, thumb.asImageBitmap())

@@ -24,14 +24,14 @@ object PdfBuilder {
     }
 
     /** Speichert ein Foto verkleinert als JPEG (spart Speicher und PDF-Größe). */
-    fun savePage(context: Context, bitmap: Bitmap, maxLongEdge: Int = 3000): File {
+    fun savePage(context: Context, bitmap: Bitmap, maxLongEdge: Int = 3000, quality: Int = 85): File {
         val f = PdfPages.downscale(bitmap.width, bitmap.height, maxLongEdge)
         val scaled = if (f < 1.0) {
             Bitmap.createScaledBitmap(bitmap, (bitmap.width * f).toInt(), (bitmap.height * f).toInt(), true)
         } else bitmap
         val dir = File(context.cacheDir, "eigener-scanner").apply { mkdirs() }
         val file = File(dir, "seite-${System.nanoTime()}.jpg")
-        file.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+        file.outputStream().use { scaled.compress(Bitmap.CompressFormat.JPEG, quality, it) }
         if (scaled !== bitmap) scaled.recycle()
         return file
     }
