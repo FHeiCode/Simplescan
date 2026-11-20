@@ -76,6 +76,18 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import de.simplescan.app.data.PdfBuilder
+import androidx.camera.core.ImageAnalysis
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import de.simplescan.app.data.PageDetector
+import de.simplescan.app.data.PdfPages
+import de.simplescan.app.data.Pt
+import de.simplescan.app.data.QuadMath
+import java.util.concurrent.Executors
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -87,8 +99,8 @@ private val ScanGreen = Color(0xFF1F6F5C)
 private val ScanMint = Color(0xFFB9E4D6)
 
 /**
- * Versuch „eigener Scanner“, Schritt 1: eigene Kamera-Ansicht im App-Grün, Auslöser, Blitz,
- * mehrere Seiten. Noch ohne Seitenerkennung – die Fotos kommen unverändert ins PDF.
+ * Versuch „eigener Scanner“: eigene Kamera-Ansicht im App-Grün, Auslöser, Blitz, mehrere Seiten.
+ * Schritt 2: Live-Rahmen um die erkannte Seite; nach dem Foto wird sie ausgeschnitten und entzerrt.
  */
 @Composable
 fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
@@ -146,6 +158,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
             CameraArea(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 pages = pages,
+                openCvReady = openCvReady,
                 onDone = { onDone(pages.toList()) },
             )
         }
@@ -153,11 +166,16 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () -> Unit) {
+private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady: Boolean, onDone: () -> Unit) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FIT_CENTER } }
+    val ratio43 = remember {
+        ResolutionSelector.Builder()
+            .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+            .build()
+    }
     // Höchste verfügbare Auflösung im Fotoformat 4:3 (sonst wählt CameraX evtl. eine kleinere).
     val imageCapture = remember {
         ImageCapture.Builder()
@@ -170,17 +188,72 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
             )
             .build()
     }
+    // Kleines Vorschaubild für die Live-Erkennung (gleiches 4:3-Format wie Vorschau und Foto).
+    val analysis = remember {
+        ImageAnalysis.Builder()
+            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(
+                        ResolutionStrategy(android.util.Size(640, 480), ResolutionStrategy.FALLBACK_RULE_CLOSEST_LOWER_THEN_HIGHER)
+                    )
+                    .build()
+            )
+            .build()
+    }
+    val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     var camera by remember { mutableStateOf<Camera?>(null) }
     var flash by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
 
+    // Live-Ecken in 0..1 des (gedrehten) Analysebilds, dazu dessen Seitenverhältnis.
+    var liveQuad by remember { mutableStateOf<List<Pt>?>(null) }
+    var liveAspect by remember { mutableStateOf(3f / 4f) }
+    var lastThumb by remember { mutableStateOf<ImageBitmap?>(null) }
+    var lastDetected by remember { mutableStateOf<Boolean?>(null) }
+
     LaunchedEffect(Unit) {
         try {
             val provider = cameraProvider(context)
-            val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            val preview = Preview.Builder().setResolutionSelector(ratio43).build()
+                .also { it.setSurfaceProvider(previewView.surfaceProvider) }
+            if (openCvReady) {
+                var missing = 0
+                var smoothed: List<Pt>? = null
+                analysis.setAnalyzer(analysisExecutor) { image ->
+                    try {
+                        val plane = image.planes[0]
+                        val gray = PageDetector.grayFromY(
+                            plane.buffer, image.width, image.height, plane.rowStride, image.imageInfo.rotationDegrees,
+                        )
+                        val w = gray.cols().toDouble()
+                        val h = gray.rows().toDouble()
+                        val quad = PageDetector.detect(gray)?.map { Pt(it.x / w, it.y / h) }
+                        gray.release()
+                        if (quad != null) {
+                            missing = 0
+                            smoothed = QuadMath.smooth(smoothed, quad)
+                        } else if (++missing > 4) {
+                            smoothed = null
+                        }
+                        val show = smoothed
+                        val aspect = (w / h).toFloat()
+                        ContextCompat.getMainExecutor(context).execute { liveQuad = show; liveAspect = aspect }
+                    } catch (e: Exception) {
+                        Log.w("Simplescan", "Erkennung", e)
+                    } finally {
+                        image.close()
+                    }
+                }
+            }
             provider.unbindAll()
-            camera = provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+            camera = if (openCvReady) {
+                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture, analysis)
+            } else {
+                provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -189,7 +262,11 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
         }
     }
     DisposableEffect(Unit) {
-        onDispose { runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() } }
+        onDispose {
+            runCatching { ProcessCameraProvider.getInstance(context).get().unbindAll() }
+            analysis.clearAnalyzer()
+            analysisExecutor.shutdown()
+        }
     }
     LaunchedEffect(flash) {
         imageCapture.flashMode = if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
@@ -218,13 +295,28 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
                 override fun onCaptureSuccess(image: ImageProxy) {
                     scope.launch {
                         try {
-                            val file = withContext(Dispatchers.IO) {
-                                val bmp = image.use { img -> rotate(img.toBitmap(), img.imageInfo.rotationDegrees) }
-                                PdfBuilder.savePage(context, bmp).also { bmp.recycle() }
+                            val (file, thumb, detected) = withContext(Dispatchers.Default) {
+                                var bmp = image.use { img -> rotate(img.toBitmap(), img.imageInfo.rotationDegrees) }
+                                // Erst auf Arbeitsgröße bringen (spart Speicher), dann Seite suchen und gerade ziehen.
+                                val f = PdfPages.downscale(bmp.width, bmp.height, 3000)
+                                if (f < 1.0) {
+                                    val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
+                                    bmp.recycle(); bmp = scaled
+                                }
+                                val quad = if (openCvReady) runCatching { PageDetector.detect(bmp) }.getOrNull() else null
+                                val page = if (quad != null) PageDetector.warp(bmp, quad).also { bmp.recycle() } else bmp
+                                val saved = PdfBuilder.savePage(context, page)
+                                val t = Bitmap.createScaledBitmap(page, 96, (96f * page.height / page.width).toInt().coerceAtLeast(1), true)
+                                page.recycle()
+                                Triple(saved, t.asImageBitmap(), quad != null)
                             }
                             pages.add(file)
+                            lastThumb = thumb
+                            lastDetected = detected
                         } catch (e: CancellationException) {
                             throw e
+                        } catch (e: OutOfMemoryError) {
+                            error = "Zu wenig Speicher für dieses Foto."
                         } catch (e: Exception) {
                             error = "Foto konnte nicht gespeichert werden: ${e.message ?: e.javaClass.simpleName}"
                         } finally {
@@ -255,6 +347,38 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
                     detectTapGestures { offset -> focus(offset.x, offset.y) }
                 },
             )
+            // Grüner Rahmen um die erkannte Seite
+            Canvas(Modifier.fillMaxSize()) {
+                val q = liveQuad ?: return@Canvas
+                // Vorschau ist „FIT_CENTER“: Bildfläche im Kasten berechnen.
+                val boxRatio = size.width / size.height
+                val (dw, dh) = if (boxRatio > liveAspect) size.height * liveAspect to size.height else size.width to size.width / liveAspect
+                val ox = (size.width - dw) / 2
+                val oy = (size.height - dh) / 2
+                val path = Path().apply {
+                    q.forEachIndexed { i, p ->
+                        val x = ox + (p.x * dw).toFloat()
+                        val y = oy + (p.y * dh).toFloat()
+                        if (i == 0) moveTo(x, y) else lineTo(x, y)
+                    }
+                    close()
+                }
+                drawPath(path, ScanGreen.copy(alpha = 0.28f))
+                drawPath(path, ScanMint, style = Stroke(width = 3.dp.toPx()))
+            }
+            // Hinweis oben
+            Text(
+                when {
+                    !openCvReady -> "Seitenerkennung nicht verfügbar"
+                    liveQuad != null -> "Seite erkannt"
+                    else -> "Seite ins Bild halten"
+                },
+                color = if (liveQuad != null) ScanGreen else Color.White,
+                fontSize = 13.sp,
+                modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+                    .background(if (liveQuad != null) ScanMint else Color(0x99000000), RoundedCornerShape(50))
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            )
             error?.let {
                 Text(
                     it, color = Color.White, textAlign = TextAlign.Center,
@@ -281,10 +405,19 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
                         tint = if (flash) Color(0xFFF2C94C) else Color.White,
                     )
                 }
-                Text(
-                    if (pages.size == 1) "1 Seite" else "${pages.size} Seiten",
-                    color = ScanMint, fontSize = 14.sp,
-                )
+                lastThumb?.let {
+                    Image(
+                        it, contentDescription = "Letzte Seite",
+                        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(6.dp)).border(1.dp, ScanMint, RoundedCornerShape(6.dp)),
+                    )
+                    Spacer(Modifier.width(8.dp))
+                }
+                Column {
+                    Text(if (pages.size == 1) "1 Seite" else "${pages.size} Seiten", color = ScanMint, fontSize = 14.sp)
+                    lastDetected?.let {
+                        Text(if (it) "zugeschnitten" else "ganzes Foto", color = ScanMint.copy(alpha = 0.8f), fontSize = 11.sp)
+                    }
+                }
             }
             // Auslöser
             Box(
@@ -300,7 +433,6 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
                 }
             }
         }
-        Spacer(Modifier.width(0.dp))
     }
 }
 
