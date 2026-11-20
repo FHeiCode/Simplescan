@@ -19,7 +19,7 @@ val releaseVersion: String? = System.getenv("RELEASE_VERSION")?.takeIf { it.isNo
 
 android {
     namespace = "de.simplescan.app"
-    compileSdk = 35
+    compileSdk = 36 // CameraX 1.6 verlangt mindestens 36 zum Kompilieren
 
     defaultConfig {
         applicationId = "de.simplescan.app"
