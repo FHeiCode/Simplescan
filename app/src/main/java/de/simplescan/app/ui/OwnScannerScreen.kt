@@ -159,7 +159,7 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
 
     LaunchedEffect(Unit) {
         try {
-            val provider = ProcessCameraProvider.awaitInstance(context)
+            val provider = cameraProvider(context)
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
             provider.unbindAll()
             provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
@@ -260,6 +260,19 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
         Spacer(Modifier.width(0.dp))
     }
 }
+
+/** Kamera-Dienst holen, ohne den Haupt-Thread zu blockieren. */
+private suspend fun cameraProvider(context: android.content.Context): ProcessCameraProvider =
+    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+        val future = ProcessCameraProvider.getInstance(context)
+        future.addListener({
+            try {
+                cont.resumeWith(Result.success(future.get()))
+            } catch (e: Exception) {
+                cont.resumeWith(Result.failure(e))
+            }
+        }, ContextCompat.getMainExecutor(context))
+    }
 
 private fun rotate(src: Bitmap, degrees: Int): Bitmap {
     if (degrees % 360 == 0) return src
