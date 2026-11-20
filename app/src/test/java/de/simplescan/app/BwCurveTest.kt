@@ -10,12 +10,13 @@ class BwCurveTest {
 
     @Test
     fun blackBelowWhiteAboveSmoothBetween() {
-        val t = BwCurve.table(150.0)
+        val t = BwCurve.table(150.0) // schwarz bis 105, weiß ab 145
         assertEquals(0, at(t, 100))
-        assertEquals(0, at(t, 120))
-        assertEquals(255, at(t, 162))
+        assertEquals(0, at(t, 105))
+        assertEquals(255, at(t, 145))
+        assertEquals(255, at(t, 150)) // Grau an der Schwelle wird weiß → schlanke Striche
         assertEquals(255, at(t, 250))
-        val mid = at(t, 141)
+        val mid = at(t, 125)
         assertTrue(mid in 100..200)
         // gleichmäßig steigend
         for (v in 1..255) assertTrue(at(t, v) >= at(t, v - 1))

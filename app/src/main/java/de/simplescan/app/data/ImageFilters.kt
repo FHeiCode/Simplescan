@@ -36,7 +36,8 @@ object ImageFilters {
                     val gray = Mat()
                     val tmp = Mat()
                     Imgproc.cvtColor(even, gray, Imgproc.COLOR_RGB2GRAY)
-                    Imgproc.GaussianBlur(gray, gray, Size(3.0, 3.0), 0.0)
+                    // Median statt Weichzeichnen: entfernt Krümel, ohne die Striche zu verbreitern.
+                    Imgproc.medianBlur(gray, gray, 3)
                     val t = Imgproc.threshold(gray, tmp, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
                     tmp.release()
                     val lut = Mat(1, 256, org.opencv.core.CvType.CV_8UC1)
