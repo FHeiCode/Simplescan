@@ -211,12 +211,6 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
         }
     }
 
-    fun shoot() {
-        if (busy) return
-        busy = true
-        focus { capture() }
-    }
-
     fun capture() {
         imageCapture.takePicture(
             ContextCompat.getMainExecutor(context),
@@ -245,6 +239,12 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
                 }
             },
         )
+    }
+
+    fun shoot() {
+        if (busy) return
+        busy = true
+        focus { capture() }
     }
 
     Column(modifier) {
