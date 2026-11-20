@@ -8,7 +8,15 @@ import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
+import androidx.camera.core.resolutionselector.AspectRatioStrategy
+import androidx.camera.core.resolutionselector.ResolutionSelector
+import androidx.camera.core.resolutionselector.ResolutionStrategy
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import java.util.concurrent.TimeUnit
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.ImageProxy
@@ -150,9 +158,19 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val previewView = remember { PreviewView(context).apply { scaleType = PreviewView.ScaleType.FIT_CENTER } }
+    // Höchste verfügbare Auflösung im Fotoformat 4:3 (sonst wählt CameraX evtl. eine kleinere).
     val imageCapture = remember {
-        ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build()
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setResolutionSelector(
+                ResolutionSelector.Builder()
+                    .setAspectRatioStrategy(AspectRatioStrategy.RATIO_4_3_FALLBACK_AUTO_STRATEGY)
+                    .setResolutionStrategy(ResolutionStrategy.HIGHEST_AVAILABLE_STRATEGY)
+                    .build()
+            )
+            .build()
     }
+    var camera by remember { mutableStateOf<Camera?>(null) }
     var flash by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
@@ -162,7 +180,7 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
             val provider = cameraProvider(context)
             val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewView.surfaceProvider) }
             provider.unbindAll()
-            provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
+            camera = provider.bindToLifecycle(lifecycleOwner, CameraSelector.DEFAULT_BACK_CAMERA, preview, imageCapture)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -177,9 +195,29 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
         imageCapture.flashMode = if (flash) ImageCapture.FLASH_MODE_ON else ImageCapture.FLASH_MODE_OFF
     }
 
+    /** Scharfstellen auf einen Punkt der Vorschau (Bildmitte, wenn nichts angegeben), dann [then]. */
+    fun focus(x: Float? = null, y: Float? = null, then: (() -> Unit)? = null) {
+        val cam = camera
+        if (cam == null) { then?.invoke(); return }
+        val factory = previewView.meteringPointFactory
+        val point = factory.createPoint(x ?: (previewView.width / 2f), y ?: (previewView.height / 2f))
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF or FocusMeteringAction.FLAG_AE)
+            .setAutoCancelDuration(3, TimeUnit.SECONDS)
+            .build()
+        val future = cam.cameraControl.startFocusAndMetering(action)
+        if (then != null) {
+            // Auslösen, sobald scharf (oder spätestens nach dem Versuch – manche Kameras melden kein Ergebnis).
+            future.addListener({ then() }, ContextCompat.getMainExecutor(context))
+        }
+    }
+
     fun shoot() {
         if (busy) return
         busy = true
+        focus { capture() }
+    }
+
+    fun capture() {
         imageCapture.takePicture(
             ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageCapturedCallback() {
@@ -211,7 +249,12 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, onDone: () 
 
     Column(modifier) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            AndroidView(factory = { previewView }, modifier = Modifier.fillMaxSize())
+            AndroidView(
+                factory = { previewView },
+                modifier = Modifier.fillMaxSize().pointerInput(Unit) {
+                    detectTapGestures { offset -> focus(offset.x, offset.y) }
+                },
+            )
             error?.let {
                 Text(
                     it, color = Color.White, textAlign = TextAlign.Center,
