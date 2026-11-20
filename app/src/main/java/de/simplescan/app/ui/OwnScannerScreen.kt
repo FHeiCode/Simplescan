@@ -288,7 +288,8 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady
         }
     }
 
-    fun capture() {
+    /** [live]: grüner Rahmen beim Auslösen (0..1), Ersatz, falls im Foto selbst keine Seite gefunden wird. */
+    fun capture(live: List<Pt>?) {
         imageCapture.takePicture(
             ContextCompat.getMainExecutor(context),
             object : ImageCapture.OnImageCapturedCallback() {
@@ -303,7 +304,13 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady
                                     val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
                                     bmp.recycle(); bmp = scaled
                                 }
-                                val quad = if (openCvReady) runCatching { PageDetector.detect(bmp) }.getOrNull() else null
+                                // Seite im Foto suchen (zwei Größen); sonst den Live-Rahmen nehmen, den man beim Auslösen sah.
+                                val quad = if (!openCvReady) null else
+                                    runCatching { PageDetector.detect(bmp, 900) }.getOrNull()
+                                        ?: runCatching { PageDetector.detect(bmp, 480) }.getOrNull()
+                                        ?: live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
+                                            ?.takeIf { QuadMath.plausible(it, bmp.width, bmp.height) }
+                                Log.i("Simplescan", "Seite: " + (quad?.let { "erkannt" } ?: "nicht erkannt"))
                                 val page = if (quad != null) PageDetector.warp(bmp, quad).also { bmp.recycle() } else bmp
                                 val saved = PdfBuilder.savePage(context, page)
                                 val t = Bitmap.createScaledBitmap(page, 96, (96f * page.height / page.width).toInt().coerceAtLeast(1), true)
@@ -336,7 +343,8 @@ private fun CameraArea(modifier: Modifier, pages: MutableList<File>, openCvReady
     fun shoot() {
         if (busy) return
         busy = true
-        focus { capture() }
+        val live = liveQuad
+        focus { capture(liveQuad ?: live) }
     }
 
     Column(modifier) {
