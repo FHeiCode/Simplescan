@@ -71,9 +71,9 @@ class AspectTest {
     }
 
     @Test
-    fun frontalPhotoFallsBackToMeasuredEdges() {
+    fun frontalPhotoKeepsMeasuredRatio() {
         val frontal = listOf(Pt(100.0, 100.0), Pt(310.0, 100.0), Pt(310.0, 397.0), Pt(100.0, 397.0))
-        org.junit.Assert.assertNull(QuadMath.trueAspect(frontal, 400, 500))
+        org.junit.Assert.assertEquals(210.0 / 297.0, QuadMath.trueAspect(frontal, 400, 500)!!, 0.002)
         val (w, h) = QuadMath.correctedSize(frontal, 400, 500)
         org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
     }
@@ -83,5 +83,38 @@ class AspectTest {
         org.junit.Assert.assertEquals(1 / Math.sqrt(2.0), QuadMath.snapToA4(0.69), 1e-9)
         org.junit.Assert.assertEquals(0.77, QuadMath.snapToA4(0.77), 1e-9) // US-Letter bleibt
         org.junit.Assert.assertEquals(Math.sqrt(2.0), QuadMath.snapToA4(1.40), 1e-9)
+    }
+}
+
+class ForwardTiltTest {
+    // Hochkant-Foto 3000 × 4000, Handy nur nach vorn gekippt (25°): obere und untere Kante bleiben parallel.
+    // Brennweite der Kamera 0,75 × 4000 = 3000 px. Gemessene Kanten ergäben 0,88 statt 0,71.
+    private val f = 3000.0
+    private val quad: List<Pt>
+    init {
+        val a = Math.toRadians(25.0)
+        fun p(x: Double, y: Double): Pt {
+            val yy = y * Math.cos(a); val z = y * Math.sin(a) + 450
+            return Pt(1500 + f * x / z, 2000 + f * yy / z)
+        }
+        quad = listOf(p(-105.0, -148.5), p(105.0, -148.5), p(105.0, 148.5), p(-105.0, 148.5))
+    }
+
+    @Test
+    fun measuredEdgesAreWrong() {
+        val (w, h) = QuadMath.outputSize(quad)
+        org.junit.Assert.assertTrue(w.toDouble() / h > 0.85)
+    }
+
+    @Test
+    fun knownFocalGivesA4() {
+        org.junit.Assert.assertEquals(210.0 / 297.0, QuadMath.trueAspect(quad, 3000, 4000, f)!!, 0.002)
+    }
+
+    @Test
+    fun typicalFocalIsCloseEnoughForA4() {
+        // ohne Kameradaten: typischer Wert 0,75 × lange Kante = genau dieser Fall
+        val (w, h) = QuadMath.correctedSize(quad, 3000, 4000)
+        org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
     }
 }

@@ -70,7 +70,7 @@ fun PagePreview(page: ScanPage, number: Int, filter: PageFilter, onEditCorners: 
                 val bmp = if (page.filter == filter) {
                     BitmapFactory.decodeFile(page.rendered.absolutePath)
                 } else {
-                    PageRenderer.pageBitmap(page.photo, page.quad, page.rotation, filter)
+                    PageRenderer.pageBitmap(page.photo, page.quad, page.rotation, filter, page.focalRatio)
                 }
                 bmp.asImageBitmap()
             }
