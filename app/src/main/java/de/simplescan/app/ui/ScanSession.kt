@@ -7,7 +7,12 @@ import android.graphics.Matrix
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import de.simplescan.app.data.EditGeometry
+import de.simplescan.app.data.ImageFilters
+import de.simplescan.app.data.PageFilter
 import de.simplescan.app.data.PageDetector
 import de.simplescan.app.data.PdfBuilder
 import de.simplescan.app.data.Pt
@@ -26,6 +31,7 @@ data class ScanPage(
     val photoHeight: Int,
     val quad: List<Pt>?,
     val rotation: Int,
+    val filter: PageFilter,
     val rendered: File,
     val thumb: ImageBitmap,
 )
@@ -33,6 +39,9 @@ data class ScanPage(
 /** Alle Seiten eines Scan-Vorgangs. Lebt nur, solange der eigene Scanner offen ist. */
 class ScanSession {
     val pages = mutableStateListOf<ScanPage>()
+
+    /** Filter für neue Seiten (und „für alle“ in der Übersicht). */
+    var filter by mutableStateOf(PageFilter.ENHANCE)
 
     fun replace(page: ScanPage) {
         val i = pages.indexOfFirst { it.id == page.id }
@@ -80,12 +89,15 @@ object PageRenderer {
 
     /** Fertige Seite aus Foto, Ecken und Drehung erzeugen (zuschneiden, entzerren, drehen). */
     suspend fun render(
-        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int,
+        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter,
     ): ScanPage = withContext(Dispatchers.Default) {
         val src = BitmapFactory.decodeFile(photo.absolutePath) ?: throw java.io.IOException("Foto nicht lesbar")
         val pw = src.width
         val ph = src.height
         var page = if (quad != null) PageDetector.warp(src, quad).also { src.recycle() } else src
+        if (filter != PageFilter.ORIGINAL) {
+            page = ImageFilters.apply(page, filter).also { page.recycle() }
+        }
         if (rotation % 360 != 0) {
             val m = Matrix().apply { postRotate(rotation.toFloat()) }
             page = Bitmap.createBitmap(page, 0, 0, page.width, page.height, m, true).also { if (it !== page) page.recycle() }
@@ -93,6 +105,17 @@ object PageRenderer {
         val rendered = PdfBuilder.savePage(context, page)
         val thumb = Bitmap.createScaledBitmap(page, 240, (240f * page.height / page.width).toInt().coerceAtLeast(1), true)
         page.recycle()
-        ScanPage(id, photo, pw, ph, quad, rotation, rendered, thumb.asImageBitmap())
+        ScanPage(id, photo, pw, ph, quad, rotation, filter, rendered, thumb.asImageBitmap())
     }
+}
+
+/** Foto aus der Galerie laden: richtig gedreht (EXIF), höchstens [maxLongEdge] Pixel, als ARGB_8888. */
+fun loadGalleryImage(context: Context, uri: android.net.Uri, maxLongEdge: Int = 3000): Bitmap {
+    val source = android.graphics.ImageDecoder.createSource(context.contentResolver, uri)
+    val bmp = android.graphics.ImageDecoder.decodeBitmap(source) { decoder, info, _ ->
+        decoder.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
+        val f = de.simplescan.app.data.PdfPages.downscale(info.size.width, info.size.height, maxLongEdge)
+        if (f < 1.0) decoder.setTargetSize((info.size.width * f).toInt(), (info.size.height * f).toInt())
+    }
+    return if (bmp.config == Bitmap.Config.ARGB_8888) bmp else bmp.copy(Bitmap.Config.ARGB_8888, false).also { bmp.recycle() }
 }

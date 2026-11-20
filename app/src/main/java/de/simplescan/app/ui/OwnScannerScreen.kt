@@ -83,6 +83,11 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.material.icons.outlined.PhotoLibrary
+import androidx.compose.runtime.rememberUpdatedState
+import de.simplescan.app.data.AutoCaptureTracker
+import de.simplescan.app.data.PageFilter
 import de.simplescan.app.data.EditGeometry
 import de.simplescan.app.data.PageDetector
 import de.simplescan.app.data.PdfPages
@@ -127,12 +132,15 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
     // Test: Wird OpenCV (für die Seitenerkennung) auf diesem Gerät geladen?
     val openCvReady = remember { runCatching { OpenCVLoader.initLocal() }.getOrDefault(false) }
 
-    /** Seite mit neuen Ecken oder neuer Drehung neu berechnen. */
-    fun rerender(page: ScanPage, quad: List<Pt>?, rotation: Int) {
+    var autoOn by remember { mutableStateOf(true) }
+    var importing by remember { mutableStateOf(false) }
+
+    /** Seite mit neuen Ecken, Drehung oder neuem Filter neu berechnen. */
+    fun rerender(page: ScanPage, quad: List<Pt>?, rotation: Int, filter: PageFilter = page.filter) {
         busyId = page.id
         scope.launch {
             try {
-                session.replace(PageRenderer.render(context, page.id, page.photo, quad, rotation))
+                session.replace(PageRenderer.render(context, page.id, page.photo, quad, rotation, filter))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -143,6 +151,52 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
         }
     }
 
+    /** Filter für alle Seiten setzen und nacheinander neu berechnen. */
+    fun filterAll(filter: PageFilter) {
+        session.filter = filter
+        scope.launch {
+            for (page in session.pages.toList()) {
+                if (page.filter == filter) continue
+                busyId = page.id
+                try {
+                    session.replace(PageRenderer.render(context, page.id, page.photo, page.quad, page.rotation, filter))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Log.w("Simplescan", "Filter", e)
+                }
+            }
+            busyId = null
+        }
+    }
+
+    // Fotos aus der Galerie: Seite suchen, zuschneiden, Filter – dann zur Übersicht.
+    val galleryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(30)) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        importing = true
+        scope.launch {
+            for (uri in uris) {
+                try {
+                    val page = withContext(Dispatchers.Default) {
+                        val bmp = loadGalleryImage(context, uri)
+                        val quad = if (!openCvReady) null else
+                            runCatching { PageDetector.detect(bmp, 900) ?: PageDetector.detect(bmp, 480) }.getOrNull()
+                        val photo = PageRenderer.savePhoto(context, bmp)
+                        bmp.recycle()
+                        PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter)
+                    }
+                    session.pages.add(page)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    Log.w("Simplescan", "Galerie", e)
+                }
+            }
+            importing = false
+            mode = "overview"
+        }
+    }
+
     when (mode) {
         "overview" -> {
             PagesOverview(
@@ -150,6 +204,8 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                 busyId = busyId,
                 onEdit = { editing = it; mode = "edit" },
                 onRotate = { rerender(it, it.quad, EditGeometry.rotateRight(it.rotation)) },
+                onFilter = { rerender(it, it.quad, it.rotation, it.filter.next()) },
+                onFilterAll = { filterAll(it) },
                 onAddMore = { mode = "camera" },
                 onFinish = { onDone(session.finish()) },
                 onClose = { close() },
@@ -187,6 +243,17 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                     color = ScanMint, fontSize = 12.sp,
                 )
             }
+            // Automatisch auslösen an/aus
+            TextButton(onClick = { autoOn = !autoOn }) {
+                Text(if (autoOn) "Auto: an" else "Auto: aus", color = if (autoOn) ScanMint else Color.White, fontSize = 14.sp)
+            }
+            IconButton(
+                onClick = { galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                enabled = !importing,
+            ) {
+                if (importing) CircularProgressIndicator(Modifier.size(22.dp), color = ScanMint, strokeWidth = 2.dp)
+                else Icon(Icons.Outlined.PhotoLibrary, "Aus der Galerie", tint = Color.White)
+            }
         }
 
         if (!hasPermission) {
@@ -210,6 +277,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 session = session,
                 openCvReady = openCvReady,
+                autoOn = autoOn,
                 onShowPages = { mode = "overview" },
             )
         }
@@ -217,8 +285,14 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
 }
 
 @Composable
-private fun CameraArea(modifier: Modifier, session: ScanSession, openCvReady: Boolean, onShowPages: () -> Unit) {
+private fun CameraArea(
+    modifier: Modifier, session: ScanSession, openCvReady: Boolean, autoOn: Boolean, onShowPages: () -> Unit,
+) {
     val pages = session.pages
+    val autoOnNow by rememberUpdatedState(autoOn)
+    val tracker = remember { AutoCaptureTracker() }
+    var steadying by remember { mutableStateOf(false) }
+    var autoFire by remember { mutableStateOf(0) }
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
@@ -284,8 +358,13 @@ private fun CameraArea(modifier: Modifier, session: ScanSession, openCvReady: Bo
                         val quad = PageDetector.detect(gray)?.map { Pt(it.x / w, it.y / h) }
                         gray.release()
                         val show = stabilizer.update(quad)
+                        val fire = tracker.update(show, System.currentTimeMillis())
+                        val steady = tracker.steadying
                         val aspect = (w / h).toFloat()
-                        ContextCompat.getMainExecutor(context).execute { liveQuad = show; liveAspect = aspect }
+                        ContextCompat.getMainExecutor(context).execute {
+                            liveQuad = show; liveAspect = aspect; steadying = steady
+                            if (fire && autoOnNow) autoFire++
+                        }
                     } catch (e: Exception) {
                         Log.w("Simplescan", "Erkennung", e)
                     } finally {
@@ -359,7 +438,7 @@ private fun CameraArea(modifier: Modifier, session: ScanSession, openCvReady: Bo
                                 // Originalfoto behalten (für späteres Nachbessern der Ecken), dann Seite berechnen.
                                 val photo = PageRenderer.savePhoto(context, bmp)
                                 bmp.recycle()
-                                PageRenderer.render(context, System.nanoTime(), photo, quad, 0) to (quad != null)
+                                PageRenderer.render(context, System.nanoTime(), photo, quad, 0, session.filter) to (quad != null)
                             }
                             pages.add(scanPage)
                             lastDetected = detected
@@ -387,8 +466,12 @@ private fun CameraArea(modifier: Modifier, session: ScanSession, openCvReady: Bo
         if (busy) return
         busy = true
         val live = liveQuad
+        tracker.disarm(live) // dieselbe Seite nicht gleich noch einmal automatisch
         focus { capture(liveQuad ?: live) }
     }
+
+    // Automatisch auslösen, wenn die Seite ruhig im Rahmen liegt.
+    LaunchedEffect(autoFire) { if (autoFire > 0 && autoOn && !busy) shoot() }
 
     Column(modifier) {
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -421,6 +504,8 @@ private fun CameraArea(modifier: Modifier, session: ScanSession, openCvReady: Bo
             Text(
                 when {
                     !openCvReady -> "Seitenerkennung nicht verfügbar"
+                    busy -> "Foto wird verarbeitet …"
+                    liveQuad != null && autoOn && steadying -> "Ruhig halten …"
                     liveQuad != null -> "Seite erkannt"
                     else -> "Seite ins Bild halten"
                 },

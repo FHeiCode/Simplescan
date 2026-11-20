@@ -31,6 +31,11 @@ import androidx.compose.material.icons.outlined.Crop
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.RotateRight
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
+import de.simplescan.app.data.PageFilter
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -58,6 +63,8 @@ fun PagesOverview(
     busyId: Long?,
     onEdit: (ScanPage) -> Unit,
     onRotate: (ScanPage) -> Unit,
+    onFilter: (ScanPage) -> Unit,
+    onFilterAll: (PageFilter) -> Unit,
     onAddMore: () -> Unit,
     onFinish: () -> Unit,
     onClose: () -> Unit,
@@ -73,6 +80,24 @@ fun PagesOverview(
                 if (session.pages.size == 1) "1 Seite" else "${session.pages.size} Seiten",
                 color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Medium, modifier = Modifier.weight(1f),
             )
+        }
+
+        // Filter für alle Seiten
+        Row(
+            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Filter für alle:", color = Color(0xFF3F4945), fontSize = 13.sp)
+            PageFilter.entries.forEach { f ->
+                FilterChip(
+                    selected = session.filter == f,
+                    onClick = { onFilterAll(f) },
+                    enabled = busyId == null,
+                    label = { Text(f.label) },
+                    colors = FilterChipDefaults.filterChipColors(selectedContainerColor = Mint, selectedLabelColor = Green),
+                )
+            }
         }
 
         if (session.pages.isEmpty()) {
@@ -96,6 +121,7 @@ fun PagesOverview(
                         busy = busyId == page.id,
                         onEdit = { onEdit(page) },
                         onRotate = { onRotate(page) },
+                        onFilter = { onFilter(page) },
                         onDelete = { session.remove(page.id) },
                         onLeft = { session.move(page.id, -1) },
                         onRight = { session.move(page.id, +1) },
@@ -136,6 +162,7 @@ private fun PageTile(
     busy: Boolean,
     onEdit: () -> Unit,
     onRotate: () -> Unit,
+    onFilter: () -> Unit,
     onDelete: () -> Unit,
     onLeft: () -> Unit,
     onRight: () -> Unit,
@@ -150,6 +177,12 @@ private fun PageTile(
                 "$number", color = Color.White, fontSize = 12.sp,
                 modifier = Modifier.align(Alignment.TopStart).background(Green, RoundedCornerShape(50))
                     .padding(horizontal = 8.dp, vertical = 2.dp),
+            )
+            // Filter dieser Seite, Tippen schaltet weiter
+            Text(
+                page.filter.label, color = Green, fontSize = 11.sp,
+                modifier = Modifier.align(Alignment.BottomCenter).background(Mint, RoundedCornerShape(50))
+                    .clickable(enabled = !busy, onClick = onFilter).padding(horizontal = 10.dp, vertical = 3.dp),
             )
             if (busy) {
                 Text(
