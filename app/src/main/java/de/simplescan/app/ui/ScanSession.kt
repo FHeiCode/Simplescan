@@ -87,13 +87,9 @@ object PageRenderer {
         return f
     }
 
-    /** Fertige Seite aus Foto, Ecken und Drehung erzeugen (zuschneiden, entzerren, drehen). */
-    suspend fun render(
-        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter,
-    ): ScanPage = withContext(Dispatchers.Default) {
+    /** Seite als Bild berechnen (zuschneiden, entzerren, Filter, drehen), ohne zu speichern. */
+    fun pageBitmap(photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter): Bitmap {
         val src = BitmapFactory.decodeFile(photo.absolutePath) ?: throw java.io.IOException("Foto nicht lesbar")
-        val pw = src.width
-        val ph = src.height
         var page = if (quad != null) PageDetector.warp(src, quad).also { src.recycle() } else src
         if (filter != PageFilter.ORIGINAL) {
             page = ImageFilters.apply(page, filter).also { page.recycle() }
@@ -102,6 +98,18 @@ object PageRenderer {
             val m = Matrix().apply { postRotate(rotation.toFloat()) }
             page = Bitmap.createBitmap(page, 0, 0, page.width, page.height, m, true).also { if (it !== page) page.recycle() }
         }
+        return page
+    }
+
+    /** Fertige Seite aus Foto, Ecken und Drehung erzeugen (zuschneiden, entzerren, drehen). */
+    suspend fun render(
+        context: Context, id: Long, photo: File, quad: List<Pt>?, rotation: Int, filter: PageFilter,
+    ): ScanPage = withContext(Dispatchers.Default) {
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(photo.absolutePath, bounds)
+        val pw = bounds.outWidth
+        val ph = bounds.outHeight
+        val page = pageBitmap(photo, quad, rotation, filter)
         // Schwarzweiß mit weniger Kompression, sonst zeigen sich Artefakte an den Buchstabenkanten.
         val rendered = PdfBuilder.savePage(context, page, quality = if (filter == PageFilter.BW) 95 else 85)
         val thumb = Bitmap.createScaledBitmap(page, 240, (240f * page.height / page.width).toInt().coerceAtLeast(1), true)

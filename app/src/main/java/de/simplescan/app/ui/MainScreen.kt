@@ -224,22 +224,30 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         },
         snackbarHost = { SnackbarHost(snackbar) },
         floatingActionButton = {
+            // Großer Scannen-Knopf im Kopf-Grün mit dem App-Logo.
             if (!selecting) ExtendedFloatingActionButton(
                 onClick = { if (ownScanner) showOwnScanner = true else startScan(context, scanLauncher, vm) },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                icon = { Icon(Icons.Outlined.DocumentScanner, contentDescription = null) },
-                text = { Text("Scannen") },
+                containerColor = StageGreen,
+                contentColor = Color.White,
+                shape = RoundedCornerShape(28.dp),
+                modifier = Modifier.height(72.dp),
+                icon = {
+                    Image(
+                        painter = painterResource(R.drawable.ic_launcher_foreground),
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                    )
+                },
+                text = { Text("Scannen", fontSize = 20.sp, fontWeight = FontWeight.Medium) },
             )
         },
     ) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            // Kein seitlicher Abstand: Speicherort-Karte ist so breit wie der grüne Kopf.
-            contentPadding = PaddingValues(top = 8.dp, bottom = 96.dp),
+        // Fest stehender Teil (Speicherort, E-Mail, Scanner, Überschrift); nur die Dateiliste darunter scrollt.
+        Column(
+            Modifier.fillMaxSize().padding(padding).padding(top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Card(
                     onClick = { showTargetDialog = true },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
@@ -258,7 +266,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Card(
                     onClick = { showEmailDialog = true },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -283,7 +291,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Card(
                     onClick = { vm.setOwnScanner(!ownScanner) },
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
@@ -305,7 +313,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
-            item {
+            Box(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
                     "Zuletzt gespeichert",
@@ -323,6 +331,11 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                 }
             }
 
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                // Platz unten, damit der große Scannen-Knopf nichts verdeckt.
+                contentPadding = PaddingValues(bottom = 112.dp),
+            ) {
             if (recent.isEmpty()) {
                 item {
                     Box(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 48.dp), contentAlignment = Alignment.Center) {
@@ -346,6 +359,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                     )
                     HorizontalDivider()
                 }
+            }
             }
         }
     }

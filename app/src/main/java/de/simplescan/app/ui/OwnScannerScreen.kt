@@ -203,6 +203,8 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                 session = session,
                 busyId = busyId,
                 onEdit = { editing = it; mode = "edit" },
+                // Tipp auf eine Seite: bei „Original“ wie bisher Ecken anpassen, sonst große Ansicht im gewählten Filter.
+                onOpen = { editing = it; mode = if (session.filter == PageFilter.ORIGINAL) "edit" else "preview" },
                 onRotate = { rerender(it, it.quad, EditGeometry.rotateRight(it.rotation)) },
                 onFilter = { rerender(it, it.quad, it.rotation, it.filter.next()) },
                 onFilterAll = { filterAll(it) },
@@ -211,6 +213,20 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                 onClose = { close() },
             )
             return
+        }
+        "preview" -> {
+            val page = editing?.let { e -> session.pages.firstOrNull { it.id == e.id } }
+            if (page != null) {
+                PagePreview(
+                    page = page,
+                    number = session.pages.indexOf(page) + 1,
+                    filter = session.filter,
+                    onEditCorners = { editing = page; mode = "edit" },
+                    onBack = { mode = "overview" },
+                )
+                return
+            }
+            mode = "overview"
         }
         "edit" -> {
             val page = editing

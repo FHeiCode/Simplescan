@@ -62,6 +62,7 @@ fun PagesOverview(
     session: ScanSession,
     busyId: Long?,
     onEdit: (ScanPage) -> Unit,
+    onOpen: (ScanPage) -> Unit,
     onRotate: (ScanPage) -> Unit,
     onFilter: (ScanPage) -> Unit,
     onFilterAll: (PageFilter) -> Unit,
@@ -120,6 +121,7 @@ fun PagesOverview(
                         isLast = index == session.pages.lastIndex,
                         busy = busyId == page.id,
                         onEdit = { onEdit(page) },
+                        onOpen = { onOpen(page) },
                         onRotate = { onRotate(page) },
                         onFilter = { onFilter(page) },
                         onDelete = { session.remove(page.id) },
@@ -161,6 +163,7 @@ private fun PageTile(
     isLast: Boolean,
     busy: Boolean,
     onEdit: () -> Unit,
+    onOpen: () -> Unit,
     onRotate: () -> Unit,
     onFilter: () -> Unit,
     onDelete: () -> Unit,
@@ -171,7 +174,7 @@ private fun PageTile(
         Modifier.clip(RoundedCornerShape(16.dp)).background(Color.White)
             .border(1.dp, Mint, RoundedCornerShape(16.dp)),
     ) {
-        Box(Modifier.fillMaxWidth().aspectRatio(0.75f).clickable(enabled = !busy, onClick = onEdit).padding(8.dp)) {
+        Box(Modifier.fillMaxWidth().aspectRatio(0.75f).clickable(enabled = !busy, onClick = onOpen).padding(8.dp)) {
             Image(page.thumb, "Seite $number", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
             Text(
                 "$number", color = Color.White, fontSize = 12.sp,
