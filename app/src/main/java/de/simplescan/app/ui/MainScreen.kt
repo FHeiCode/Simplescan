@@ -99,9 +99,6 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
-import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import de.simplescan.app.data.DavKind
 import de.simplescan.app.data.SavedScan
 import de.simplescan.app.data.Target
@@ -144,8 +141,10 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
 
     var showTargetDialog by remember { mutableStateOf(false) }
     var showEmailDialog by remember { mutableStateOf(false) }
-    val ownScanner by vm.ownScanner.collectAsStateWithLifecycle()
     var showOwnScanner by rememberSaveable { mutableStateOf(false) }
+    val appVersion = remember {
+        runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull() ?: ""
+    }
     val defaultEmail by vm.defaultEmail.collectAsStateWithLifecycle()
 
     // Mehrfachauswahl: Adressen der ausgewählten Einträge. Leer = normale Ansicht.
@@ -166,19 +165,11 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
     val davBusy by vm.davBusy.collectAsStateWithLifecycle()
     val davError by vm.davError.collectAsStateWithLifecycle()
 
-    // Ergebnis des Scanners: fertiges PDF im App-Cache, das wir danach an den Speicherort kopieren.
-    val scanLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { res ->
-        if (res.resultCode == Activity.RESULT_OK) {
-            val pdf = GmsDocumentScanningResult.fromActivityResultIntent(res.data)?.pdf
-            if (pdf != null) vm.onScanned(pdf.uri, pdf.pageCount) else vm.show("Der Scanner hat kein PDF geliefert.")
-        }
-    }
-
     val folderLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         if (uri != null) vm.useFolder(uri)
     }
 
-    // Versuch: eigener Scanner als Vollbild statt der Startseite.
+    // Scanner als Vollbild statt der Startseite.
     if (showOwnScanner) {
         OwnScannerScreen(
             onDone = { pages -> showOwnScanner = false; vm.onOwnScanFinished(pages) },
@@ -226,7 +217,7 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
         floatingActionButton = {
             // Großer Scannen-Knopf im Kopf-Grün mit dem App-Logo.
             if (!selecting) ExtendedFloatingActionButton(
-                onClick = { if (ownScanner) showOwnScanner = true else startScan(context, scanLauncher, vm) },
+                onClick = { showOwnScanner = true },
                 containerColor = StageGreen,
                 contentColor = Color.White,
                 shape = RoundedCornerShape(28.dp),
@@ -292,28 +283,6 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
             }
 
             Box(Modifier.fillMaxWidth()) {
-                Card(
-                    onClick = { vm.setOwnScanner(!ownScanner) },
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-                    shape = RoundedCornerShape(28.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                ) {
-                    Row(Modifier.padding(horizontal = 20.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.DocumentScanner, contentDescription = null)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Scanner", style = MaterialTheme.typography.labelMedium)
-                            Text(
-                                if (ownScanner) "Eigener Scanner (Test)" else "Google-Scanner",
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
-                        }
-                        Switch(checked = ownScanner, onCheckedChange = { vm.setOwnScanner(it) })
-                    }
-                }
-            }
-
-            Box(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = 16.dp)) {
                 Text(
                     "Zuletzt gespeichert",
@@ -359,6 +328,16 @@ fun MainScreen(vm: ScanViewModel = viewModel()) {
                     )
                     HorizontalDivider()
                 }
+            }
+            // Unauffällig ganz unten: Version und Autor.
+            item {
+                Text(
+                    "Simplescan $appVersion · FHeiCode",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                )
             }
             }
         }
@@ -579,21 +558,6 @@ private fun SaveDialog(
         },
         dismissButton = { TextButton(onClick = onDiscard, enabled = !saving) { Text("Verwerfen") } },
     )
-}
-
-private fun startScan(context: Context, launcher: ActivityResultLauncher<IntentSenderRequest>, vm: ScanViewModel) {
-    val activity = context as? Activity ?: return
-    val options = GmsDocumentScannerOptions.Builder()
-        .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL) // Erkennen, Zuschneiden, Filter
-        .setGalleryImportAllowed(true)
-        .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_PDF)
-        .build()
-    GmsDocumentScanning.getClient(options)
-        .getStartScanIntent(activity)
-        .addOnSuccessListener { sender -> launcher.launch(IntentSenderRequest.Builder(sender).build()) }
-        .addOnFailureListener { e ->
-            vm.show("Scanner startet nicht (Google-Play-Dienste nötig, beim ersten Mal Internet): ${e.localizedMessage ?: e}")
-        }
 }
 
 /** Prüft, ob die Datei noch da ist; sonst verschwindet sie aus der Liste. */

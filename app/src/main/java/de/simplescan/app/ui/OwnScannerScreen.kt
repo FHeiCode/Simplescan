@@ -106,7 +106,7 @@ private val ScanGreen = Color(0xFF1F6F5C)
 private val ScanMint = Color(0xFFB9E4D6)
 
 /**
- * Versuch „eigener Scanner“: eigene Kamera-Ansicht im App-Grün, Auslöser, Blitz, mehrere Seiten.
+ * Scanner: eigene Kamera-Ansicht im App-Grün, Auslöser, Blitz, mehrere Seiten.
  * Schritt 2: Live-Rahmen um die erkannte Seite; nach dem Foto wird sie ausgeschnitten und entzerrt.
  * Schritt 3: Seitenübersicht (drehen, löschen, umsortieren) und Ecken von Hand anpassen.
  */
@@ -129,7 +129,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
         onClose()
     }
 
-    // Test: Wird OpenCV (für die Seitenerkennung) auf diesem Gerät geladen?
+    // OpenCV laden (Seitenerkennung, Entzerren, Filter). Klappt das nicht, gibt es nur ganze Fotos.
     val openCvReady = remember { runCatching { OpenCVLoader.initLocal() }.getOrDefault(false) }
 
     var autoOn by remember { mutableStateOf(true) }
@@ -252,13 +252,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = { close() }) { Icon(Icons.Outlined.Close, "Abbrechen", tint = Color.White) }
-            Column(Modifier.weight(1f)) {
-                Text("Eigener Scanner", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 18.sp)
-                Text(
-                    if (openCvReady) "Test · Bildverarbeitung bereit" else "Test · Bildverarbeitung nicht geladen",
-                    color = ScanMint, fontSize = 12.sp,
-                )
-            }
+            Text("Scanner", color = Color.White, fontWeight = FontWeight.Medium, fontSize = 18.sp, modifier = Modifier.weight(1f))
             // Automatisch auslösen an/aus
             TextButton(onClick = { autoOn = !autoOn }) {
                 Text(if (autoOn) "Auto: an" else "Auto: aus", color = if (autoOn) ScanMint else Color.White, fontSize = 14.sp)

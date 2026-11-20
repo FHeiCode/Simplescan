@@ -4,7 +4,7 @@
     <!-- Kamera läuft im Scanner der Google-Play-Dienste, lokal gespeichert wird über MediaStore
          (Download) bzw. den Ordnerauswahl-Dialog. Internet nur für Nextcloud/WebDAV. -->
     <uses-permission android:name="android.permission.INTERNET" />
-    <!-- Nur für den eigenen Scanner (Versuch); der Google-Scanner braucht sie nicht. -->
+    <!-- Kamera für den Scanner. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
@@ -44,10 +44,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- Scanner-Modell beim Installieren gleich mitladen, damit der erste Scan schneller startet -->
-        <meta-data
-            android:name="com.google.mlkit.vision.DEPENDENCIES"
-            android:value="document_scanner" />
     </application>
 </manifest>

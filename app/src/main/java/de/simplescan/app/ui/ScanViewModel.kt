@@ -79,12 +79,7 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     private val _linkBusy = MutableStateFlow(false)
     val linkBusy: StateFlow<Boolean> = _linkBusy.asStateFlow()
 
-    val ownScanner: StateFlow<Boolean> = settings.ownScanner
-        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
-
-    fun setOwnScanner(on: Boolean) = viewModelScope.launch { settings.setOwnScanner(on) }
-
-    /** Eigener Scanner: Seitenfotos zu einem PDF machen, dann wie gewohnt der Speichern-Dialog. */
+    /** Scanner: Seitenfotos zu einem PDF machen, dann wie gewohnt der Speichern-Dialog. */
     fun onOwnScanFinished(pages: List<java.io.File>) {
         if (pages.isEmpty()) return
         viewModelScope.launch {

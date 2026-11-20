@@ -91,7 +91,7 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    // Versuch eigener Scanner: Kamera (CameraX) und Bildverarbeitung (OpenCV, ab Schritt 2 für die Seitenerkennung)
+    // Scanner: Kamera (CameraX) und Bildverarbeitung (OpenCV: Seitenerkennung, Entzerren, Filter)
     val cameraX = "1.6.2"
     implementation("androidx.camera:camera-camera2:$cameraX")
     implementation("androidx.camera:camera-lifecycle:$cameraX")
@@ -100,10 +100,6 @@ dependencies {
 
     // Hochladen zu Nextcloud/WebDAV (eigene Methoden wie PROPFIND und MKCOL)
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-
-    // Google ML Kit Dokumentenscanner: Kamera, Seitenerkennung, Zuschneiden, Filter, PDF.
-    // Läuft über die Google-Play-Dienste, braucht keine Kameraberechtigung in der App.
-    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
