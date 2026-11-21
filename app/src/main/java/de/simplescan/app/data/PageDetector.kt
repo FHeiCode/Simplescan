@@ -22,8 +22,10 @@ import kotlin.math.max
  * Seiten verfeinert (robust gegen Eselsohren, runde Ecken, Finger) und nach Kantentreue bewertet. Liegt das beste
  * Viereck in einem größeren, das ebenfalls passt (Tabelle/Kasten im Blatt), gewinnt das größere.
  *
- * Gemessen an künstlichen Testfotos (tools/erkennung-test): Foto 135/140 richtig (vorher 57), live in Graustufen
- * 130/140 (vorher 57), auch Visitenkarten, Kassenbons, Briefumschläge und weißes Blatt auf weißem Tisch.
+ * Dazu: keine Seite am Bildrand, jede Seite einzeln auf einer Kante, gerade Seiten, Faltfelder zusammensetzen.
+ *
+ * Gemessen an künstlichen Testfotos mit Fingern, Eselsohren, Faltungen und Lichtflecken (tools/erkennung-test,
+ * 280 Fotos): Foto 230 richtig (bis 2.2: 71), live in Graustufen 208 (bis 2.2: 67).
  */
 object PageDetector {
 
@@ -99,7 +101,8 @@ object PageDetector {
             val om = mat(); Imgproc.threshold(blur, om, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
             Imgproc.morphologyEx(om, om, Imgproc.MORPH_CLOSE, k15); maps += om
 
-            val found = ArrayList<Pair<List<Pt>, Double>>() // Viereck, Kantentreue
+            // Kandidaten: Viereck, mittlere Kantentreue, schwächste Seite
+            val found = ArrayList<Triple<List<Pt>, Double, Double>>()
             for (m in maps) {
                 val contours = ArrayList<MatOfPoint>()
                 val hier = Mat()
@@ -109,23 +112,42 @@ object PageDetector {
                     for (c in contours.sortedByDescending { Imgproc.contourArea(it) }.take(12)) {
                         val (q0, hull) = quadFromContour(c) ?: continue
                         if (!QuadMath.plausibleCandidate(q0, w, h)) continue
-                        val q = refine(q0, hull)
-                        if (!QuadMath.plausibleCandidate(q, w, h)) continue
-                        val sup = support(q, edgeBytes, w, h)
-                        if (sup >= 0.35) found += q to sup
+                        val (q, bend) = refine(q0, hull)
+                        // Seiten müssen gerade sein (Papierkante gerade, Rand eines Lichtflecks rund).
+                        if (bend > MAX_BEND || !QuadMath.plausibleCandidate(q, w, h)) continue
+                        val sides = sideSupport(q, edgeBytes, w, h)
+                        found += Triple(q, sides.average(), sides.min())
                     }
                 } finally {
                     contours.forEach { it.release() }
                 }
             }
-            val good = found.filter { it.second >= 0.45 }
+            // Jede Seite muss auf einer echten Kante liegen (gegen erfundene Seiten quer über den Tisch).
+            val good = found.filter { it.second >= 0.45 && it.third >= MIN_SIDE }
             if (good.isEmpty()) return null
             val imgArea = w.toDouble() * h
             var best = good.maxBy { it.second * kotlin.math.sqrt(QuadMath.area(it.first) / imgArea) }.first
-            // Kasten/Tabelle im Blatt? Dann das umgebende Blatt nehmen.
-            val outer = found.map { it.first }
+            // Faltfeld/Tabelle im Blatt? Dann das umgebende Blatt nehmen – es darf eine schwächere Seite haben,
+            // weil das kräftige innere Viereck es bestätigt.
+            val outer = found
+                .filter { it.second >= 0.45 && it.third >= MIN_SIDE_OUTER }
+                .map { it.first }
                 .filter { QuadMath.area(it) > 1.25 * QuadMath.area(best) && QuadMath.inside(best, it) }
             if (outer.isNotEmpty()) best = outer.maxBy { QuadMath.area(it) }
+            // Gefalteter Brief: Felder, die sich eine Knicklinie teilen, zum ganzen Blatt zusammensetzen.
+            val tol = 0.03 * kotlin.math.hypot(w.toDouble(), h.toDouble())
+            repeat(3) {
+                var grown: List<Pt>? = null
+                for ((q, _, _) in found) {
+                    val u = QuadMath.mergeAlongSharedSide(best, q, tol) ?: continue
+                    if (!QuadMath.plausibleCandidate(u, w, h) || QuadMath.area(u) <= 1.1 * QuadMath.area(best)) continue
+                    val sides = sideSupport(u, edgeBytes, w, h)
+                    if (sides.average() >= 0.45 && sides.min() >= MIN_SIDE_OUTER &&
+                        (grown == null || QuadMath.area(u) > QuadMath.area(grown!!))
+                    ) grown = u
+                }
+                best = grown ?: return best
+            }
             return best
         } finally {
             toRelease.forEach { it.release() }
@@ -156,9 +178,16 @@ object PageDetector {
         }
     }
 
-    /** Geraden durch die Konturpunkte jeder Seite (ohne die Eckbereiche), Ecken = Schnittpunkte. */
-    private fun refine(q: List<Pt>, hull: List<Pt>): List<Pt> {
-        if (hull.size < 8) return q
+    private const val MIN_SIDE = 0.3        // jede Seite so weit auf einer Kante
+    private const val MIN_SIDE_OUTER = 0.18 // für das Blatt um ein kräftiges inneres Viereck
+    private const val MAX_BEND = 0.012      // Seiten gerade: Abweichung höchstens 1,2 % der Seitenlänge
+
+    /**
+     * Geraden durch die Konturpunkte jeder Seite (ohne die Eckbereiche), Ecken = Schnittpunkte.
+     * Gibt die Ecken und die größte Krümmung einer Seite (mittlere Abweichung / Seitenlänge) zurück.
+     */
+    private fun refine(q: List<Pt>, hull: List<Pt>): Pair<List<Pt>, Double> {
+        if (hull.size < 8) return q to 0.0
         val dense = ArrayList<Pt>()
         for (i in hull.indices) {
             val a = hull[i]; val b = hull[(i + 1) % hull.size]
@@ -166,6 +195,7 @@ object PageDetector {
             for (k in 0 until n) { val t = k.toDouble() / n; dense += Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) }
         }
         val lines = ArrayList<Pair<Pt, Pt>>()
+        var bend = 0.0
         for (i in 0 until 4) {
             val a = q[i]; val b = q[(i + 1) % 4]
             val len = kotlin.math.hypot(b.x - a.x, b.y - a.y)
@@ -176,32 +206,34 @@ object PageDetector {
                 val off = kotlin.math.abs(-uy * rx + ux * ry)
                 t > 0.12 * len && t < 0.88 * len && off < 0.03 * len + 3
             }
-            if (sel.size < 5) return q
+            if (sel.size < 5) return q to 0.0
             val m = MatOfPoint2f(*sel.map { Point(it.x, it.y) }.toTypedArray())
             val line = Mat()
             Imgproc.fitLine(m, line, Imgproc.DIST_HUBER, 0.0, 0.01, 0.01)
             val v = FloatArray(4); line.get(0, 0, v)
             m.release(); line.release()
             lines += Pt(v[2].toDouble(), v[3].toDouble()) to Pt(v[0].toDouble(), v[1].toDouble())
+            val nx = -v[1].toDouble(); val ny = v[0].toDouble()
+            val rms = kotlin.math.sqrt(sel.sumOf { val d = (it.x - v[2]) * nx + (it.y - v[3]) * ny; d * d } / sel.size)
+            bend = max(bend, rms / len)
         }
         val out = (0 until 4).map { i ->
             val (p1, d1) = lines[(i + 3) % 4]; val (p2, d2) = lines[i]
-            QuadMath.intersect(p1, d1, p2, d2) ?: return q
+            QuadMath.intersect(p1, d1, p2, d2) ?: return q to bend
         }
         val r = QuadMath.order(out)
         // Die Verfeinerung darf nicht weit wegspringen.
-        return if (QuadMath.maxCornerShift(r, q) > 0.12 * kotlin.math.sqrt(QuadMath.area(q))) q else r
+        return (if (QuadMath.maxCornerShift(r, q) > 0.12 * kotlin.math.sqrt(QuadMath.area(q))) q else r) to bend
     }
 
-    /** Anteil der Prüfpunkte auf den Seiten, die auf einer Kante liegen. */
-    private fun support(q: List<Pt>, edges: ByteArray, w: Int, h: Int): Double {
-        val pts = QuadMath.sidePoints(q)
-        val hit = pts.count { p ->
-            val x = p.x.toInt(); val y = p.y.toInt()
-            x in 0 until w && y in 0 until h && edges[y * w + x].toInt() != 0
+    /** Je Seite: Anteil der Prüfpunkte, die auf einer Kante liegen. */
+    private fun sideSupport(q: List<Pt>, edges: ByteArray, w: Int, h: Int): List<Double> =
+        QuadMath.sidePoints(q).map { pts ->
+            pts.count { p ->
+                val x = p.x.toInt(); val y = p.y.toInt()
+                x in 0 until w && y in 0 until h && edges[y * w + x].toInt() != 0
+            }.toDouble() / pts.size
         }
-        return hit.toDouble() / pts.size
-    }
 
     /** Median der Helligkeit (für die Kanten-Schwellen). */
     private fun median(gray: Mat): Double {

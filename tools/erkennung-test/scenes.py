@@ -43,6 +43,10 @@ def document(wmm, hmm, rng, px_per_mm=6):
         y += int(lh * rng.uniform(2.2, 3.5))
     if rng.random() < 0.4:  # farbiger Kasten / Logo
         cv2.rectangle(paper, (int(w * .6), int(h * .05)), (int(w * .92), int(h * .14)), (40, 90, 200), -1)
+    if rng.random() < 0.4:  # gefalteter Brief: zwei Knicklinien quer (kräftige innere Kanten)
+        for f in (1 / 3, 2 / 3):
+            y0 = int(h * f); cv2.line(paper, (0, y0), (w, y0 + int(rng.uniform(-8, 8))), (190, 190, 190), 3)
+            paper[y0:y0 + int(h * 0.3)] *= rng.uniform(0.9, 0.97)
     if rng.random() < 0.3:  # Tabellenrahmen (verführt zu falschen Vierecken)
         cv2.rectangle(paper, (int(w * .08), int(h * .45)), (int(w * .92), int(h * .75)), (30, 30, 30), 3)
     return paper
@@ -94,6 +98,12 @@ def scene(seed):
             fold = np.array([c + (nxt - c) * r, c + (prv - c) * r, c + ((nxt - c) + (prv - c)) * r], np.int32)
             cv2.fillConvexPoly(warped, fold, (225, 225, 225))
         mask = m2[..., None]
+    if rng.random() < 0.35:  # spiegelnde Tischfläche: heller Fleck neben dem Blatt
+        c = corners[int(rng.integers(0, 4))]
+        blob = np.zeros((H, W), np.float32)
+        cv2.ellipse(blob, (int(np.clip(c[0], 0, W)), int(np.clip(c[1], 0, H))), (int(W * .35), int(H * .2)), 0, 0, 360, 1.0, -1)
+        blob = cv2.GaussianBlur(blob, (0, 0), 60)[..., None]
+        img = img + blob * 90
     img = img * (1 - mask) + warped * mask
     # Finger über einer Kante
     if rng.random() < 0.3:

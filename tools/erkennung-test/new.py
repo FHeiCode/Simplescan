@@ -13,10 +13,14 @@ def plausible(q, w, h, min_area=0.04):
         v1, v2 = a - b, c - b
         cosang = np.dot(v1, v2) / (np.linalg.norm(v1) * np.linalg.norm(v2) + 1e-9)
         if not (-0.82 < cosang < 0.82): return False
-    # Bildrand: an mehr als 2 Seiten am Rand → eher der ganze Ausschnitt/Tisch
-    m = 0.01 * max(w, h)
-    touch = sum([q[:, 0].min() < m, q[:, 1].min() < m, q[:, 0].max() > w - m, q[:, 1].max() > h - m])
-    return touch <= 2
+    # Eine Seite, die am Bildrand entlangläuft, ist nicht das Blatt, sondern ein Stück Tisch/Ausschnitt.
+    m = 0.015 * max(w, h)
+    for i in range(4):
+        a_, b_ = q[i], q[(i + 1) % 4]
+        if (a_[0] < m and b_[0] < m) or (a_[1] < m and b_[1] < m) or \
+           (a_[0] > w - m and b_[0] > w - m) or (a_[1] > h - m and b_[1] > h - m):
+            return False
+    return True
 
 def quad_from_contour(c):
     hull = cv2.convexHull(c)
@@ -28,8 +32,9 @@ def quad_from_contour(c):
     return None, None
 
 def refine(q, pts):
-    """Gerade durch die Konturpunkte jeder Seite (ohne die Eckbereiche), Ecken = Schnittpunkte."""
-    if pts is None or len(pts) < 8: return q
+    """Gerade durch die Konturpunkte jeder Seite (ohne die Eckbereiche), Ecken = Schnittpunkte.
+    Gibt (Ecken, größte Krümmung einer Seite) zurück."""
+    if pts is None or len(pts) < 8: return q, 0.0
     # Konturpunkte dicht machen
     dense = []
     for i in range(len(pts)):
@@ -37,39 +42,46 @@ def refine(q, pts):
         n = max(2, int(np.hypot(*(b - a)) / 3))
         dense.extend(a + (b - a) * t for t in np.linspace(0, 1, n, endpoint=False))
     dense = np.array(dense)
-    lines = []
+    lines = []; bend = []
     for i in range(4):
         a, b = q[i], q[(i + 1) % 4]
         d = b - a; L = np.linalg.norm(d); u = d / L; nrm = np.array([-u[1], u[0]])
         rel = dense - a
         t = rel @ u; off = np.abs(rel @ nrm)
         sel = dense[(t > 0.12 * L) & (t < 0.88 * L) & (off < 0.03 * L + 3)]
-        if len(sel) < 5: return q
+        if len(sel) < 5: return q, 0.0
         vx, vy, x0, y0 = cv2.fitLine(sel.astype(np.float32), cv2.DIST_HUBER, 0, 0.01, 0.01).ravel()
         lines.append((np.array([x0, y0]), np.array([vx, vy])))
+        # Wie gerade ist die Seite? (Papierkante gerade, Rand eines Lichtflecks rund)
+        d_ = (sel - np.array([x0, y0])) @ np.array([-vy, vx])
+        bend.append(float(np.sqrt(np.mean(d_ ** 2))) / L)
     out = []
     for i in range(4):
         (p1, d1), (p2, d2) = lines[i - 1], lines[i]
         A = np.array([d1, -d2]).T
-        if abs(np.linalg.det(A)) < 1e-6: return q
+        if abs(np.linalg.det(A)) < 1e-6: return q, max(bend)
         s = np.linalg.solve(A, p2 - p1)
         out.append(p1 + d1 * s[0])
     r = order(np.array(out))
     # Verfeinerung darf nicht weit wegspringen
-    if max(np.hypot(*(r[i] - q[i])) for i in range(4)) > 0.12 * np.sqrt(area(q)): return q
-    return r
+    if max(np.hypot(*(r[i] - q[i])) for i in range(4)) > 0.12 * np.sqrt(area(q)): return q, max(bend)
+    return r, max(bend)
 
-def support(q, edges):
-    """Anteil der Punkte auf den vier Seiten, die auf einer Kante liegen."""
-    h, w = edges.shape; hit = tot = 0
+def side_support(q, edges):
+    """Je Seite: Anteil der Punkte, die auf einer Kante liegen."""
+    h, w = edges.shape; res = []
     for i in range(4):
         a, b = q[i], q[(i + 1) % 4]
-        n = max(10, int(np.hypot(*(b - a)) / 4))
+        n = max(10, int(np.hypot(*(b - a)) / 4)); hit = 0
         for t in np.linspace(0.05, 0.95, n):
             x, y = (a + (b - a) * t).astype(int)
-            tot += 1
             if 0 <= x < w and 0 <= y < h and edges[y, x]: hit += 1
-    return hit / max(tot, 1)
+        res.append(hit / n)
+    return res
+
+MIN_SIDE = 0.3        # jede Seite muss so weit auf einer Kante liegen (gegen erfundene Seiten)
+MAX_BEND = 0.012      # Seiten müssen gerade sein (Abweichung höchstens 1,2 % der Seitenlänge)
+MIN_SIDE_OUTER = 0.18 # für ein Blatt, das ein kräftiges inneres Viereck (Faltfeld, Tabelle) umschließt
 
 def candidates(binary):
     cs, _ = cv2.findContours(binary, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
@@ -105,22 +117,48 @@ def detect_bgr(small):
     _, om = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     om = cv2.morphologyEx(om, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_RECT, (15, 15)))
     maps.append(om)
-    found = []  # (Viereck, Kantentreue)
+    found = []  # (Viereck, mittlere Kantentreue, schwächste Seite)
     for m in maps:
         for c in candidates(m):
             q, hull = quad_from_contour(c)
             if q is None or not plausible(q, w, h): continue
-            q = refine(q, hull)
-            if not plausible(q, w, h): continue
-            sup = support(q, edges)
-            if sup >= 0.35: found.append((q, sup))
-    good = [(q, s) for q, s in found if s >= 0.45]
+            q, bend = refine(q, hull)
+            if bend > MAX_BEND or not plausible(q, w, h): continue
+            ss = side_support(q, edges)
+            found.append((q, float(np.mean(ss)), min(ss)))
+    good = [t for t in found if t[1] >= 0.45 and t[2] >= MIN_SIDE]
     if not good: return None
     best = max(good, key=lambda t: t[1] * np.sqrt(area(t[0]) / (w * h)))[0]
-    # Liegt das beste Viereck in einem größeren, das auch passt (Kasten/Tabelle im Blatt)? Dann das Blatt nehmen.
-    outer = [q for q, s in found if area(q) > 1.25 * area(best) and inside(best, q)]
+    # Liegt das beste Viereck in einem größeren, das auch passt (Faltfeld/Tabelle im Blatt)? Dann das Blatt nehmen.
+    outer = [q for q, mean, mn in found
+             if mean >= 0.45 and mn >= MIN_SIDE_OUTER and area(q) > 1.25 * area(best) and inside(best, q)]
     if outer: best = max(outer, key=area)
+    # Gefalteter Brief: Felder, die sich eine Seite (Knicklinie) teilen, zum ganzen Blatt zusammensetzen.
+    tol = 0.03 * np.hypot(w, h)
+    for _ in range(3):
+        grown = None
+        for q, _m, _n in found:
+            u = merge(best, q, tol)
+            if u is None or not plausible(u, w, h) or area(u) <= 1.1 * area(best): continue
+            ss = side_support(u, edges)
+            if np.mean(ss) >= 0.45 and min(ss) >= MIN_SIDE_OUTER and (grown is None or area(u) > area(grown)):
+                grown = u
+        if grown is None: break
+        best = grown
     return best
+
+def merge(a, b, tol):
+    """Teilen a und b eine Seite (zwei Ecken nah beieinander)? Dann das umgebende Viereck aus den vier übrigen Ecken."""
+    for i in range(4):
+        a1, a2 = a[i], a[(i + 1) % 4]
+        for j in range(4):
+            b1, b2 = b[j], b[(j + 1) % 4]
+            if np.hypot(*(a1 - b2)) < tol and np.hypot(*(a2 - b1)) < tol or np.hypot(*(a1 - b1)) < tol and np.hypot(*(a2 - b2)) < tol:
+                rest_a = [a[(i + 2) % 4], a[(i + 3) % 4]]
+                rest_b = [b[(j + 2) % 4], b[(j + 3) % 4]]
+                u = order(np.array(rest_a + rest_b))
+                return u if convex(u) else None
+    return None
 
 def inside(small, big, tol=4.0):
     poly = big.astype(np.float32).reshape(-1, 1, 2)

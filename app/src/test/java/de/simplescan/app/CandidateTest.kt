@@ -23,8 +23,10 @@ class CandidateTest {
         assertFalse(QuadMath.plausibleCandidate(rect(0.0, 0.0, 100.0, 100.0), 1200, 1600)) // zu klein
         assertFalse(QuadMath.plausibleCandidate(rect(100.0, 100.0, 1100.0, 200.0), 1200, 1600)) // Strich
         assertFalse(QuadMath.plausibleCandidate(rect(0.0, 0.0, 1199.0, 1599.0), 1200, 1600)) // ganzes Bild
-        // drei Ränder berührt (Tisch bis zum Rand)
-        assertFalse(QuadMath.plausibleCandidate(rect(0.0, 0.0, 1199.0, 900.0), 1200, 1600))
+        // eine Seite läuft am linken Bildrand entlang (Tisch bis zum Rand, wie im Bildschirmfoto)
+        assertFalse(QuadMath.plausibleCandidate(listOf(Pt(0.0, 80.0), Pt(1000.0, 190.0), Pt(1160.0, 1270.0), Pt(0.0, 1310.0)), 1200, 1600))
+        // nur eine Ecke nah am Rand ist erlaubt
+        assertTrue(QuadMath.plausibleCandidate(listOf(Pt(5.0, 200.0), Pt(1000.0, 190.0), Pt(1100.0, 1270.0), Pt(200.0, 1310.0)), 1200, 1600))
     }
 
     @Test
@@ -45,10 +47,21 @@ class CandidateTest {
     }
 
     @Test
-    fun sidePointsCoverAllSides() {
-        val pts = QuadMath.sidePoints(rect(0.0, 0.0, 400.0, 400.0), step = 4.0)
-        assertEquals(400, pts.size) // 4 Seiten × 100
-        assertTrue(pts.all { it.x in 0.0..400.0 && it.y in 0.0..400.0 })
+    fun sidePointsPerSide() {
+        val sides = QuadMath.sidePoints(rect(0.0, 0.0, 400.0, 400.0), step = 4.0)
+        assertEquals(4, sides.size)
+        assertTrue(sides.all { it.size == 100 })
+        assertTrue(sides[0].all { it.y == 0.0 }) // obere Seite
+    }
+
+    @Test
+    fun foldedLetterPanelsMerge() {
+        // oberes und mittleres Drittel eines Briefs teilen sich die Knicklinie
+        val top = listOf(Pt(100.0, 100.0), Pt(900.0, 90.0), Pt(905.0, 500.0), Pt(102.0, 505.0))
+        val mid = listOf(Pt(103.0, 507.0), Pt(904.0, 498.0), Pt(910.0, 900.0), Pt(105.0, 910.0))
+        val all = QuadMath.mergeAlongSharedSide(top, mid, 20.0)!!
+        assertEquals(listOf(Pt(100.0, 100.0), Pt(900.0, 90.0), Pt(910.0, 900.0), Pt(105.0, 910.0)), all)
+        assertNull(QuadMath.mergeAlongSharedSide(top, rect(1000.0, 1000.0, 1100.0, 1100.0), 20.0))
     }
 
     @Test

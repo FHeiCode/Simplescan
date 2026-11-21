@@ -64,8 +64,8 @@ object QuadMath {
 
     /**
      * Strengere Prüfung für Kandidaten der Seitenerkennung: konvex, mindestens [minAreaRatio] des Bildes
-     * (klein genug für Visitenkarten), Seiten nicht extrem ungleich, Innenwinkel 35°–145°, und höchstens
-     * zwei Bildränder berührt (sonst ist es eher der ganze Ausschnitt oder die Tischkante).
+     * (klein genug für Visitenkarten), Seiten nicht extrem ungleich, Innenwinkel 35°–145°, und keine Seite,
+     * die am Bildrand entlangläuft (das ist ein Stück Tisch oder der ganze Ausschnitt, nicht das Blatt).
      */
     fun plausibleCandidate(quad: List<Pt>, imageWidth: Int, imageHeight: Int, minAreaRatio: Double = 0.04): Boolean {
         if (quad.size != 4 || !isConvex(quad)) return false
@@ -78,12 +78,33 @@ object QuadMath {
             val cos = (v1x * v2x + v1y * v2y) / (hypot(v1x, v1y) * hypot(v2x, v2y) + 1e-9)
             if (cos <= -0.82 || cos >= 0.82) return false
         }
-        val m = 0.01 * max(imageWidth, imageHeight)
-        val touches = listOf(
-            quad.minOf { it.x } < m, quad.minOf { it.y } < m,
-            quad.maxOf { it.x } > imageWidth - m, quad.maxOf { it.y } > imageHeight - m,
-        ).count { it }
-        return touches <= 2
+        val m = 0.015 * max(imageWidth, imageHeight)
+        for (i in 0 until 4) {
+            val a = quad[i]; val b = quad[(i + 1) % 4]
+            if ((a.x < m && b.x < m) || (a.y < m && b.y < m) ||
+                (a.x > imageWidth - m && b.x > imageWidth - m) || (a.y > imageHeight - m && b.y > imageHeight - m)
+            ) return false
+        }
+        return true
+    }
+
+    /**
+     * Gefalteter Brief: Teilen [a] und [b] eine Seite (Knicklinie, beide Ecken höchstens [tol] auseinander),
+     * ergibt sich aus den vier übrigen Ecken das umgebende Viereck. Sonst null.
+     */
+    fun mergeAlongSharedSide(a: List<Pt>, b: List<Pt>, tol: Double): List<Pt>? {
+        for (i in 0 until 4) {
+            val a1 = a[i]; val a2 = a[(i + 1) % 4]
+            for (j in 0 until 4) {
+                val b1 = b[j]; val b2 = b[(j + 1) % 4]
+                val shared = (dist(a1, b2) < tol && dist(a2, b1) < tol) || (dist(a1, b1) < tol && dist(a2, b2) < tol)
+                if (shared) {
+                    val u = order(listOf(a[(i + 2) % 4], a[(i + 3) % 4], b[(j + 2) % 4], b[(j + 3) % 4]))
+                    return if (isConvex(u)) u else null
+                }
+            }
+        }
+        return null
     }
 
     /** Liegen alle Ecken von [small] in [big] (konvex, mit Toleranz in Pixeln)? */
@@ -103,15 +124,13 @@ object QuadMath {
         return s / 2
     }
 
-    /** Prüfpunkte entlang der vier Seiten (ohne die äußersten 5 %), etwa alle [step] Pixel. */
-    fun sidePoints(quad: List<Pt>, step: Double = 4.0): List<Pt> = buildList {
-        for (i in 0 until 4) {
-            val a = quad[i]; val b = quad[(i + 1) % 4]
-            val n = max(10, (dist(a, b) / step).toInt())
-            for (k in 0 until n) {
-                val t = 0.05 + 0.9 * k / (n - 1)
-                add(Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t))
-            }
+    /** Prüfpunkte je Seite (ohne die äußersten 5 %), etwa alle [step] Pixel. */
+    fun sidePoints(quad: List<Pt>, step: Double = 4.0): List<List<Pt>> = (0 until 4).map { i ->
+        val a = quad[i]; val b = quad[(i + 1) % 4]
+        val n = max(10, (dist(a, b) / step).toInt())
+        (0 until n).map { k ->
+            val t = 0.05 + 0.9 * k / (n - 1)
+            Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
         }
     }
 
