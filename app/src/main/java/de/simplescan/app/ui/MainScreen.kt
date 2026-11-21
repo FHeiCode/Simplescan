@@ -111,6 +111,7 @@ private val dateFormat = DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm")
 // Farben aus dem App-Icon, damit Startseite und Homescreen-Symbol zusammenpassen.
 private val StageGreen = Color(0xFF1F6F5C)
 private val StageMint = Color(0xFFB9E4D6)
+private val StageYellow = Color(0xFFF2C94C)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -419,6 +420,9 @@ private fun Stage() {
         )
         Spacer(Modifier.height(2.dp))
         Text("Scannen. Speichern. Senden.", color = StageMint, fontSize = 14.sp)
+        // Persönliche Begrüßung
+        Spacer(Modifier.height(8.dp))
+        Text("Hallo Muttchen", color = StageYellow, fontSize = 20.sp, fontWeight = FontWeight.Medium)
     }
 }
 
