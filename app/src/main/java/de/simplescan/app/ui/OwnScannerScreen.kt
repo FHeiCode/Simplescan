@@ -180,7 +180,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                     val page = withContext(Dispatchers.Default) {
                         val bmp = loadGalleryImage(context, uri)
                         val quad = if (!openCvReady) null else
-                            runCatching { PageDetector.detect(bmp, 900) ?: PageDetector.detect(bmp, 480) }.getOrNull()
+                            runCatching { PageDetector.detect(bmp) }.getOrNull()
                         val photo = PageRenderer.savePhoto(context, bmp)
                         bmp.recycle()
                         // Galerie: Brennweite unbekannt → typischer Handywert
@@ -443,12 +443,11 @@ private fun CameraArea(
                                     val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
                                     bmp.recycle(); bmp = scaled
                                 }
-                                // Seite im Foto suchen (zwei Größen); sonst den Live-Rahmen nehmen, den man beim Auslösen sah.
+                                // Seite im Foto suchen; sonst den Live-Rahmen nehmen, den man beim Auslösen sah.
                                 val quad = if (!openCvReady) null else
-                                    runCatching { PageDetector.detect(bmp, 900) }.getOrNull()
-                                        ?: runCatching { PageDetector.detect(bmp, 480) }.getOrNull()
+                                    runCatching { PageDetector.detect(bmp) }.getOrNull()
                                         ?: live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
-                                            ?.takeIf { QuadMath.plausible(it, bmp.width, bmp.height) }
+                                            ?.takeIf { QuadMath.plausibleCandidate(it, bmp.width, bmp.height) }
                                 Log.i("Simplescan", "Seite: " + (quad?.let { "erkannt" } ?: "nicht erkannt"))
                                 // Originalfoto behalten (für späteres Nachbessern der Ecken), dann Seite berechnen.
                                 val photo = PageRenderer.savePhoto(context, bmp)

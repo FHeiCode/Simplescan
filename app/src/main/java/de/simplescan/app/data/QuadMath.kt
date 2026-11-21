@@ -62,6 +62,71 @@ object QuadMath {
         return sides.min() > 0.15 * sides.max()
     }
 
+    /**
+     * Strengere Prüfung für Kandidaten der Seitenerkennung: konvex, mindestens [minAreaRatio] des Bildes
+     * (klein genug für Visitenkarten), Seiten nicht extrem ungleich, Innenwinkel 35°–145°, und höchstens
+     * zwei Bildränder berührt (sonst ist es eher der ganze Ausschnitt oder die Tischkante).
+     */
+    fun plausibleCandidate(quad: List<Pt>, imageWidth: Int, imageHeight: Int, minAreaRatio: Double = 0.04): Boolean {
+        if (quad.size != 4 || !isConvex(quad)) return false
+        if (area(quad) < minAreaRatio * imageWidth * imageHeight) return false
+        val sides = (0 until 4).map { dist(quad[it], quad[(it + 1) % 4]) }
+        if (sides.min() < 0.12 * sides.max()) return false
+        for (i in 0 until 4) {
+            val a = quad[(i + 3) % 4]; val b = quad[i]; val c = quad[(i + 1) % 4]
+            val v1x = a.x - b.x; val v1y = a.y - b.y; val v2x = c.x - b.x; val v2y = c.y - b.y
+            val cos = (v1x * v2x + v1y * v2y) / (hypot(v1x, v1y) * hypot(v2x, v2y) + 1e-9)
+            if (cos <= -0.82 || cos >= 0.82) return false
+        }
+        val m = 0.01 * max(imageWidth, imageHeight)
+        val touches = listOf(
+            quad.minOf { it.x } < m, quad.minOf { it.y } < m,
+            quad.maxOf { it.x } > imageWidth - m, quad.maxOf { it.y } > imageHeight - m,
+        ).count { it }
+        return touches <= 2
+    }
+
+    /** Liegen alle Ecken von [small] in [big] (konvex, mit Toleranz in Pixeln)? */
+    fun inside(small: List<Pt>, big: List<Pt>, tol: Double = 4.0): Boolean = small.all { p ->
+        // Abstand zu jeder Kante, Vorzeichen nach Umlaufsinn von big
+        val sign = if (signedArea(big) > 0) 1.0 else -1.0
+        (0 until big.size).all { i ->
+            val a = big[i]; val b = big[(i + 1) % big.size]
+            val cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+            sign * cross / (dist(a, b) + 1e-9) >= -tol
+        }
+    }
+
+    private fun signedArea(q: List<Pt>): Double {
+        var s = 0.0
+        for (i in q.indices) { val a = q[i]; val b = q[(i + 1) % q.size]; s += a.x * b.y - b.x * a.y }
+        return s / 2
+    }
+
+    /** Prüfpunkte entlang der vier Seiten (ohne die äußersten 5 %), etwa alle [step] Pixel. */
+    fun sidePoints(quad: List<Pt>, step: Double = 4.0): List<Pt> = buildList {
+        for (i in 0 until 4) {
+            val a = quad[i]; val b = quad[(i + 1) % 4]
+            val n = max(10, (dist(a, b) / step).toInt())
+            for (k in 0 until n) {
+                val t = 0.05 + 0.9 * k / (n - 1)
+                add(Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t))
+            }
+        }
+    }
+
+    /** Schnittpunkt zweier Geraden (Punkt + Richtung); null, wenn (fast) parallel. */
+    fun intersect(p1: Pt, d1: Pt, p2: Pt, d2: Pt): Pt? {
+        val det = d1.x * (-d2.y) - (-d2.x) * d1.y
+        if (abs(det) < 1e-9) return null
+        val rx = p2.x - p1.x; val ry = p2.y - p1.y
+        val s = (rx * (-d2.y) - (-d2.x) * ry) / det
+        return Pt(p1.x + d1.x * s, p1.y + d1.y * s)
+    }
+
+    /** Größte Eckverschiebung zwischen zwei Vierecken. */
+    fun maxCornerShift(a: List<Pt>, b: List<Pt>): Double = a.zip(b) { p, q -> dist(p, q) }.max()
+
     /** Breite und Höhe des entzerrten Bildes: jeweils die längere der gegenüberliegenden Kanten. */
     fun outputSize(ordered: List<Pt>): Pair<Int, Int> {
         val (tl, tr, br, bl) = ordered
