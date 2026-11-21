@@ -1,4 +1,3 @@
-Simplescan 2.1.0: Richtiges Seitenformat
+Simplescan 2.2.0: Hallo Muttchen
 
-- Schräg von vorn fotografierte Seiten haben jetzt das richtige Format (A4 statt zu breit)
-- Die App nutzt dafür die Brennweite der Handykamera; bei Fotos aus der Galerie einen typischen Wert
+- Persönliche Begrüßung „Hallo Muttchen“ im grünen Kopf der Startseite
