@@ -13,9 +13,9 @@ class CandidateTest {
 
     @Test
     fun businessCardIsBigEnough() {
-        // Visitenkarte, ~6 % des Bildes: früher abgelehnt (Mindestgröße 15 %), jetzt erlaubt
-        assertTrue(QuadMath.plausibleCandidate(rect(400.0, 600.0, 700.0, 800.0), 1200, 1600))
-        assertFalse(QuadMath.plausible(rect(400.0, 600.0, 700.0, 800.0), 1200, 1600))
+        // Visitenkarte, ~5 % des Bildes: früher abgelehnt (Mindestgröße 15 %), jetzt erlaubt (ab 4 %)
+        assertTrue(QuadMath.plausibleCandidate(rect(400.0, 600.0, 800.0, 850.0), 1200, 1600))
+        assertFalse(QuadMath.plausible(rect(400.0, 600.0, 800.0, 850.0), 1200, 1600))
     }
 
     @Test
