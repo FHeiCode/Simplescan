@@ -134,6 +134,20 @@ object QuadMath {
         }
     }
 
+    /** Viereck zur eigenen Mitte hin auf [factor] verkleinert (1 = unverändert). */
+    fun shrink(quad: List<Pt>, factor: Double): List<Pt> {
+        val cx = quad.sumOf { it.x } / quad.size
+        val cy = quad.sumOf { it.y } / quad.size
+        return quad.map { Pt(cx + (it.x - cx) * factor, cy + (it.y - cy) * factor) }
+    }
+
+    /** Streifen innen an Seite [i]: zwischen der Seite und dem auf [factor] verkleinerten Viereck. */
+    fun sideStrip(quad: List<Pt>, i: Int, factor: Double = 0.88): List<Pt> {
+        val inner = shrink(quad, factor)
+        val j = (i + 1) % 4
+        return listOf(quad[i], quad[j], inner[j], inner[i])
+    }
+
     /** Schnittpunkt zweier Geraden (Punkt + Richtung); null, wenn (fast) parallel. */
     fun intersect(p1: Pt, d1: Pt, p2: Pt, d2: Pt): Pt? {
         val det = d1.x * (-d2.y) - (-d2.x) * d1.y

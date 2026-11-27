@@ -9,6 +9,7 @@ import org.opencv.core.MatOfInt
 import org.opencv.core.MatOfPoint
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
+import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.max
@@ -22,10 +23,11 @@ import kotlin.math.max
  * Seiten verfeinert (robust gegen Eselsohren, runde Ecken, Finger) und nach Kantentreue bewertet. Liegt das beste
  * Viereck in einem größeren, das ebenfalls passt (Tabelle/Kasten im Blatt), gewinnt das größere.
  *
- * Dazu: keine Seite am Bildrand, jede Seite einzeln auf einer Kante, gerade Seiten, Faltfelder zusammensetzen.
+ * Dazu: keine Seite am Bildrand, jede Seite einzeln auf einer Kante, gerade Seiten, Faltfelder zusammensetzen,
+ * kein Schlagschatten im Viereck (Rand-Streifen nicht deutlich dunkler als die Mitte).
  *
- * Gemessen an künstlichen Testfotos mit Fingern, Eselsohren, Faltungen und Lichtflecken (tools/erkennung-test,
- * 280 Fotos): Foto 230 richtig (bis 2.2: 71), live in Graustufen 208 (bis 2.2: 67).
+ * Gemessen an künstlichen Testfotos mit Fingern, Eselsohren, Faltungen, Lichtflecken und Schlagschatten
+ * (tools/erkennung-test, 280 Fotos): Foto 237 richtig (bis 2.2: 70), live in Graustufen 214.
  */
 object PageDetector {
 
@@ -115,6 +117,8 @@ object PageDetector {
                         val (q, bend) = refine(q0, hull)
                         // Seiten müssen gerade sein (Papierkante gerade, Rand eines Lichtflecks rund).
                         if (bend > MAX_BEND || !QuadMath.plausibleCandidate(q, w, h)) continue
+                        // Schatten mit im Viereck? (Blatt + Schlagschatten ergibt ein sauberes Viereck)
+                        if (darkEdgeStrip(gray, q)) continue
                         val sides = sideSupport(q, edgeBytes, w, h)
                         found += Triple(q, sides.average(), sides.min())
                     }
@@ -133,6 +137,7 @@ object PageDetector {
                 .filter { it.second >= 0.45 && it.third >= MIN_SIDE_OUTER }
                 .map { it.first }
                 .filter { QuadMath.area(it) > 1.25 * QuadMath.area(best) && QuadMath.inside(best, it) }
+                .filter { !darkerRing(gray, best, it) }
             if (outer.isNotEmpty()) best = outer.maxBy { QuadMath.area(it) }
             // Gefalteter Brief: Felder, die sich eine Knicklinie teilen, zum ganzen Blatt zusammensetzen.
             val tol = 0.03 * kotlin.math.hypot(w.toDouble(), h.toDouble())
@@ -141,6 +146,7 @@ object PageDetector {
                 for ((q, _, _) in found) {
                     val u = QuadMath.mergeAlongSharedSide(best, q, tol) ?: continue
                     if (!QuadMath.plausibleCandidate(u, w, h) || QuadMath.area(u) <= 1.1 * QuadMath.area(best)) continue
+                    if (darkerRing(gray, best, u)) continue
                     val sides = sideSupport(u, edgeBytes, w, h)
                     if (sides.average() >= 0.45 && sides.min() >= MIN_SIDE_OUTER &&
                         (grown == null || QuadMath.area(u) > QuadMath.area(grown!!))
@@ -224,6 +230,53 @@ object PageDetector {
         val r = QuadMath.order(out)
         // Die Verfeinerung darf nicht weit wegspringen.
         return (if (QuadMath.maxCornerShift(r, q) > 0.12 * kotlin.math.sqrt(QuadMath.area(q))) q else r) to bend
+    }
+
+    private fun mask(gray: Mat, poly: List<Pt>): Mat {
+        val m = Mat.zeros(gray.size(), CvType.CV_8UC1)
+        val p = MatOfPoint(*poly.map { Point(it.x, it.y) }.toTypedArray())
+        Imgproc.fillConvexPoly(m, p, Scalar(255.0))
+        p.release()
+        return m
+    }
+
+    /** Mittlere Helligkeit unter der Maske; null, wenn die Fläche zu klein ist. */
+    private fun meanIn(gray: Mat, m: Mat, minPixels: Int): Double? =
+        if (Core.countNonZero(m) < minPixels) null else Core.mean(gray, m).`val`[0]
+
+    /**
+     * Ist ein Streifen innen an einer Seite deutlich dunkler als die Mitte (unter 70 %)? Dann gehört ein
+     * Schlagschatten mit zum Viereck, es ist nicht das Blatt allein. Leichtes Abfallen des Lampenlichts
+     * zum Rand (bis etwa 25 %) ist erlaubt.
+     */
+    private fun darkEdgeStrip(gray: Mat, q: List<Pt>, ratio: Double = 0.7): Boolean {
+        val mc = mask(gray, QuadMath.shrink(q, 0.6))
+        val core = meanIn(gray, mc, 50).also { mc.release() } ?: return false
+        for (i in 0 until 4) {
+            val ms = mask(gray, QuadMath.sideStrip(q, i))
+            val strip = meanIn(gray, ms, 30).also { ms.release() } ?: continue
+            if (strip < ratio * core) return true
+        }
+        return false
+    }
+
+    /**
+     * Ist der Streifen zwischen [inner] und [outer] deutlich dunkler als das Innere? Dann ist das größere
+     * Viereck Blatt + Schatten. Bei Tabelle oder Faltfeld im Blatt ist der Streifen gleich hell oder heller.
+     */
+    private fun darkerRing(gray: Mat, inner: List<Pt>, outer: List<Pt>, ratio: Double = 0.8): Boolean {
+        val mi = mask(gray, inner); val mo = mask(gray, outer)
+        val k = Mat.ones(5, 5, CvType.CV_8UC1)
+        val grown = Mat(); Imgproc.dilate(mi, grown, k)
+        val ring = Mat(); Core.subtract(mo, grown, ring)
+        val core = Mat(); Imgproc.erode(mi, core, k)
+        try {
+            val r = meanIn(gray, ring, 50) ?: return false
+            val c = meanIn(gray, core, 50) ?: return false
+            return r < ratio * c
+        } finally {
+            listOf(mi, mo, k, grown, ring, core).forEach { it.release() }
+        }
     }
 
     /** Je Seite: Anteil der Prüfpunkte, die auf einer Kante liegen. */

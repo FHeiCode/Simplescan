@@ -124,6 +124,7 @@ def detect_bgr(small):
             if q is None or not plausible(q, w, h): continue
             q, bend = refine(q, hull)
             if bend > MAX_BEND or not plausible(q, w, h): continue
+            if dark_edge_strip(gray, q): continue
             ss = side_support(q, edges)
             found.append((q, float(np.mean(ss)), min(ss)))
     good = [t for t in found if t[1] >= 0.45 and t[2] >= MIN_SIDE]
@@ -131,7 +132,8 @@ def detect_bgr(small):
     best = max(good, key=lambda t: t[1] * np.sqrt(area(t[0]) / (w * h)))[0]
     # Liegt das beste Viereck in einem größeren, das auch passt (Faltfeld/Tabelle im Blatt)? Dann das Blatt nehmen.
     outer = [q for q, mean, mn in found
-             if mean >= 0.45 and mn >= MIN_SIDE_OUTER and area(q) > 1.25 * area(best) and inside(best, q)]
+             if mean >= 0.45 and mn >= MIN_SIDE_OUTER and area(q) > 1.25 * area(best) and inside(best, q)
+             and not darker_ring(gray, best, q)]
     if outer: best = max(outer, key=area)
     # Gefalteter Brief: Felder, die sich eine Seite (Knicklinie) teilen, zum ganzen Blatt zusammensetzen.
     tol = 0.03 * np.hypot(w, h)
@@ -140,6 +142,7 @@ def detect_bgr(small):
         for q, _m, _n in found:
             u = merge(best, q, tol)
             if u is None or not plausible(u, w, h) or area(u) <= 1.1 * area(best): continue
+            if darker_ring(gray, best, u): continue
             ss = side_support(u, edges)
             if np.mean(ss) >= 0.45 and min(ss) >= MIN_SIDE_OUTER and (grown is None or area(u) > area(grown)):
                 grown = u
@@ -159,6 +162,32 @@ def merge(a, b, tol):
                 u = order(np.array(rest_a + rest_b))
                 return u if convex(u) else None
     return None
+
+def dark_edge_strip(gray, q, ratio=0.7):
+    """Ist ein Streifen innen an einer Seite deutlich dunkler als die Mitte? Dann gehört ein Schatten mit
+    zum Viereck (Blatt + Schlagschatten), es ist nicht das Blatt allein."""
+    c = q.mean(0)
+    core = c + (q - c) * 0.6
+    mc = np.zeros(gray.shape, np.uint8); cv2.fillConvexPoly(mc, core.astype(np.int32), 255)
+    if cv2.countNonZero(mc) < 50: return False
+    core_mean = cv2.mean(gray, mc)[0]
+    inner = c + (q - c) * 0.88
+    for i in range(4):
+        strip = np.array([q[i], q[(i + 1) % 4], inner[(i + 1) % 4], inner[i]])
+        ms = np.zeros(gray.shape, np.uint8); cv2.fillConvexPoly(ms, strip.astype(np.int32), 255)
+        if cv2.countNonZero(ms) < 30: continue
+        if cv2.mean(gray, ms)[0] < ratio * core_mean: return True
+    return False
+
+def darker_ring(gray, inner, outer, ratio=0.8):
+    """Ist der Streifen zwischen inner und outer deutlich dunkler als das Innere? Dann ist es ein Schatten,
+    kein Teil des Blatts (bei Tabelle oder Faltfeld im Blatt ist der Streifen gleich hell oder heller)."""
+    mi = np.zeros(gray.shape, np.uint8); mo = np.zeros(gray.shape, np.uint8)
+    cv2.fillConvexPoly(mi, inner.astype(np.int32), 255); cv2.fillConvexPoly(mo, outer.astype(np.int32), 255)
+    ring = cv2.subtract(mo, cv2.dilate(mi, np.ones((5, 5), np.uint8)))
+    inner_m = cv2.erode(mi, np.ones((5, 5), np.uint8))
+    if cv2.countNonZero(ring) < 50 or cv2.countNonZero(inner_m) < 50: return False
+    return cv2.mean(gray, ring)[0] < ratio * cv2.mean(gray, inner_m)[0]
 
 def inside(small, big, tol=4.0):
     poly = big.astype(np.float32).reshape(-1, 1, 2)

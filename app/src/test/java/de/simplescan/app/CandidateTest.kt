@@ -70,4 +70,14 @@ class CandidateTest {
         assertEquals(5.0, p.x, 1e-9); assertEquals(0.0, p.y, 1e-9)
         assertNull(QuadMath.intersect(Pt(0.0, 0.0), Pt(1.0, 0.0), Pt(0.0, 2.0), Pt(2.0, 0.0)))
     }
+
+    @Test
+    fun shrinkAndStrips() {
+        val q = rect(0.0, 0.0, 100.0, 200.0)
+        assertEquals(listOf(Pt(25.0, 50.0), Pt(75.0, 50.0), Pt(75.0, 150.0), Pt(25.0, 150.0)), QuadMath.shrink(q, 0.5))
+        // Streifen an der oberen Seite: obere Ecken + die oberen Ecken des verkleinerten Vierecks
+        val top = QuadMath.sideStrip(q, 0, 0.8)
+        assertEquals(Pt(0.0, 0.0), top[0]); assertEquals(Pt(100.0, 0.0), top[1])
+        assertEquals(90.0, top[2].x, 1e-9); assertEquals(20.0, top[2].y, 1e-9)
+    }
 }

@@ -98,6 +98,12 @@ def scene(seed):
             fold = np.array([c + (nxt - c) * r, c + (prv - c) * r, c + ((nxt - c) + (prv - c)) * r], np.int32)
             cv2.fillConvexPoly(warped, fold, (225, 225, 225))
         mask = m2[..., None]
+    if rng.random() < 0.4:  # Schlagschatten mit geraden Kanten (Lampe schräg): Blatt verschoben, dunkler Grund
+        off = np.array([rng.uniform(30, 120) * rng.choice([-1, 1]), rng.uniform(30, 140)], np.float32)
+        sh = np.zeros((H, W), np.float32)
+        cv2.fillConvexPoly(sh, cv2.convexHull(np.concatenate([corners, corners + off]).astype(np.int32)), 1.0)
+        sh = cv2.GaussianBlur(sh, (0, 0), 2)[..., None]
+        img = img * (1 - 0.55 * sh)
     if rng.random() < 0.35:  # spiegelnde Tischfläche: heller Fleck neben dem Blatt
         c = corners[int(rng.integers(0, 4))]
         blob = np.zeros((H, W), np.float32)
