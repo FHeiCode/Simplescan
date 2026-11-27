@@ -114,13 +114,14 @@ object PageDetector {
 
             val found = ArrayList<Cand>()
             var raw = 0
+            var errors = 0
             for (m in maps) {
                 val contours = ArrayList<MatOfPoint>()
                 val hier = Mat()
                 Imgproc.findContours(m, contours, hier, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
                 hier.release()
                 try {
-                    for (c in contours.sortedByDescending { Imgproc.contourArea(it) }.take(12)) {
+                    for (c in contours.sortedByDescending { Imgproc.contourArea(it) }.take(12)) try {
                         val (q0, hull) = quadFromContour(c) ?: continue
                         raw++
                         if (!QuadMath.plausibleCandidate(q0, w, h)) continue
@@ -132,6 +133,9 @@ object PageDetector {
                         // Verwerfen ließ bei echtem Lampenlicht oft gar keinen Rahmen übrig.
                         val dark = runCatching { darkEdgeStrip(gray, q) }.getOrDefault(false)
                         found += Cand(q, sides.average(), sides.min(), dark)
+                    } catch (e: RuntimeException) {
+                        // Ein missratener Kandidat darf nicht die ganze Erkennung abbrechen.
+                        errors++
                     }
                 } finally {
                     contours.forEach { it.release() }
@@ -139,7 +143,8 @@ object PageDetector {
             }
             // Jede Seite muss auf einer echten Kante liegen (gegen erfundene Seiten quer über den Tisch).
             var good = found.filter { it.mean >= 0.45 && it.min >= MIN_SIDE }
-            lastStats = "Vierecke ${raw} · passend ${found.size} · gut ${good.size} · mit dunklem Rand ${good.count { it.darkEdge }}"
+            lastStats = "Vierecke $raw · passend ${found.size} · gut ${good.size} · dunkler Rand ${good.count { it.darkEdge }}" +
+                if (errors > 0) " · übersprungen $errors" else ""
             if (good.isEmpty()) return null
             // Vierecke ohne dunklen Rand bevorzugen; gibt es nur solche mit, trotzdem das beste nehmen.
             good.filter { !it.darkEdge }.let { if (it.isNotEmpty()) good = it }
@@ -158,7 +163,7 @@ object PageDetector {
             repeat(3) {
                 var grown: List<Pt>? = null
                 for (cand in found) {
-                    val u = QuadMath.mergeAlongSharedSide(best, cand.quad, tol) ?: continue
+                    val u = runCatching { QuadMath.mergeAlongSharedSide(best, cand.quad, tol) }.getOrNull() ?: continue
                     if (!QuadMath.plausibleCandidate(u, w, h) || QuadMath.area(u) <= 1.1 * QuadMath.area(best)) continue
                     if (runCatching { darkerRing(gray, best, u) }.getOrDefault(false)) continue
                     val sides = sideSupport(u, edgeBytes, w, h)

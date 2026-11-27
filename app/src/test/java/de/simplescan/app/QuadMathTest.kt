@@ -118,3 +118,23 @@ class ForwardTiltTest {
         org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
     }
 }
+
+class OrderRobustTest {
+    @Test
+    fun duplicatePointsDoNotCrash() {
+        // Zwei Ecken auf demselben Punkt: früher NoSuchElementException → gar kein Rahmen
+        val p = Pt(10.0, 10.0)
+        val r = QuadMath.order(listOf(p, Pt(10.0, 10.0), Pt(90.0, 80.0), Pt(5.0, 70.0)))
+        assertEquals(4, r.size)
+        val same = QuadMath.order(listOf(p, p, p, p))
+        assertEquals(4, same.size)
+    }
+
+    @Test
+    fun rotatedSquareStartsTopLeft() {
+        val r = QuadMath.order(listOf(Pt(50.0, 0.0), Pt(100.0, 50.0), Pt(50.0, 100.0), Pt(0.0, 50.0)))
+        assertEquals(4, r.size)
+        // im Uhrzeigersinn (Bild, y nach unten)
+        assertTrue(QuadMath.isConvex(r))
+    }
+}

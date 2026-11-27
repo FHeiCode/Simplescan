@@ -17,12 +17,15 @@ object QuadMath {
     /** Sortiert vier Ecken als oben-links, oben-rechts, unten-rechts, unten-links. */
     fun order(points: List<Pt>): List<Pt> {
         require(points.size == 4)
-        val tl = points.minBy { it.x + it.y }
-        val br = points.maxBy { it.x + it.y }
-        val rest = points.filter { it !== tl && it !== br }.let { if (it.size == 2) it else points - setOf(tl, br) }
-        val tr = rest.minBy { it.y - it.x }
-        val bl = rest.maxBy { it.y - it.x }
-        return listOf(tl, tr, br, bl)
+        // Nach dem Winkel um die Mitte sortieren (im Bild, y nach unten: oben-links, oben-rechts, unten-rechts,
+        // unten-links), dann mit der Ecke oben-links beginnen. Funktioniert immer, auch bei doppelten Punkten.
+        // Früher: „points - setOf(tl, br)“ entfernte bei doppelten Punkten zu viel, die Restliste war leer und
+        // die Erkennung brach mit NoSuchElementException ab – es kam gar kein Rahmen.
+        val cx = points.sumOf { it.x } / 4
+        val cy = points.sumOf { it.y } / 4
+        val sorted = points.sortedBy { kotlin.math.atan2(it.y - cy, it.x - cx) }
+        val start = sorted.indices.minBy { sorted[it].x + sorted[it].y }
+        return List(4) { sorted[(start + it) % 4] }
     }
 
     /** Fläche eines Vielecks (Gaußsche Trapezformel). */
