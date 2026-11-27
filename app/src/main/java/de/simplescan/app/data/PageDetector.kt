@@ -5,82 +5,317 @@ import org.opencv.android.Utils
 import org.opencv.core.Core
 import org.opencv.core.CvType
 import org.opencv.core.Mat
+import org.opencv.core.MatOfInt
 import org.opencv.core.MatOfPoint
 import org.opencv.core.MatOfPoint2f
 import org.opencv.core.Point
+import org.opencv.core.Scalar
 import org.opencv.core.Size
 import org.opencv.imgproc.Imgproc
 import kotlin.math.max
 
 /**
- * Seitenerkennung mit OpenCV: sucht das größte plausible Viereck im Bild.
- * Zwei Durchgänge: Kanten (Canny) und Helligkeit (Otsu) – Letzteres hilft bei hellem Blatt auf dunklem Grund.
+ * Seitenerkennung mit OpenCV.
+ *
+ * Mehrere Karten aus demselben Bild (Kanten im Grau mit Schwellen aus dem Bild, Kanten in der Farbsättigung,
+ * schwache Kanten nach örtlicher Kontrastanhebung für weißes Blatt auf hellem Tisch, „Papierfläche“ hell und
+ * ungesättigt, Otsu-Helligkeit). Aus allen Konturen werden Vierecke gebildet, die Ecken über Geraden durch die
+ * Seiten verfeinert (robust gegen Eselsohren, runde Ecken, Finger) und nach Kantentreue bewertet. Liegt das beste
+ * Viereck in einem größeren, das ebenfalls passt (Tabelle/Kasten im Blatt), gewinnt das größere.
+ *
+ * Dazu: keine Seite am Bildrand, jede Seite einzeln auf einer Kante, gerade Seiten, Faltfelder zusammensetzen,
+ * Vierecke ohne dunklen Rand-Streifen (Schlagschatten) bevorzugen – aber nie deswegen ganz verwerfen.
+ *
+ * Gemessen an künstlichen Testfotos mit Fingern, Eselsohren, Faltungen, Lichtflecken und Schlagschatten
+ * (tools/erkennung-test, 280 Fotos): Foto 237 richtig (bis 2.2: 70), live in Graustufen 214.
  */
 object PageDetector {
 
-    /** Erkennung in einem Graustufenbild. Ecken (sortiert) in Pixeln dieses Bildes oder null. */
-    fun detect(gray: Mat): List<Pt>? {
-        val blur = Mat()
-        val work = Mat()
-        try {
-            Imgproc.GaussianBlur(gray, blur, Size(5.0, 5.0), 0.0)
-            // 1) Kanten
-            Imgproc.Canny(blur, work, 40.0, 120.0)
-            Imgproc.morphologyEx(
-                work, work, Imgproc.MORPH_CLOSE,
-                Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0)),
-            )
-            bestQuad(work, gray.cols(), gray.rows())?.let { return it }
-            // 2) Helligkeit
-            Imgproc.threshold(blur, work, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
-            return bestQuad(work, gray.cols(), gray.rows())
-        } finally {
-            blur.release(); work.release()
-        }
-    }
+    /**
+     * VORÜBERGEHEND (Fehlersuche „kein Rahmen“): kurze Statistik der letzten Erkennung für die Anzeige in der
+     * Kamera-Ansicht. Vor dem Release wieder entfernen.
+     */
+    @Volatile
+    var lastStats: String = ""
 
-    private fun bestQuad(binary: Mat, w: Int, h: Int): List<Pt>? {
-        val contours = ArrayList<MatOfPoint>()
-        val hierarchy = Mat()
-        Imgproc.findContours(binary, contours, hierarchy, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
-        hierarchy.release()
-        try {
-            val candidates = contours.sortedByDescending { Imgproc.contourArea(it) }.take(8)
-            for (c in candidates) {
-                val c2f = MatOfPoint2f(*c.toArray())
-                val approx = MatOfPoint2f()
-                val peri = Imgproc.arcLength(c2f, true)
-                Imgproc.approxPolyDP(c2f, approx, 0.02 * peri, true)
-                val pts = approx.toArray()
-                c2f.release(); approx.release()
-                if (pts.size == 4) {
-                    val quad = QuadMath.order(pts.map { Pt(it.x, it.y) })
-                    if (QuadMath.plausible(quad, w, h)) return quad
-                }
-            }
-            return null
-        } finally {
-            contours.forEach { it.release() }
-        }
-    }
+    private class Cand(val quad: List<Pt>, val mean: Double, val min: Double, val darkEdge: Boolean)
 
-    /** Erkennung in einem Foto: rechnet verkleinert und gibt Ecken in Pixeln des Fotos zurück. */
-    fun detect(photo: Bitmap, workLongEdge: Int = 900): List<Pt>? {
+    /** Live-Erkennung in einem kleinen Graustufenbild (Y-Ebene der Kamera). Ecken in Pixeln dieses Bildes. */
+    fun detect(gray: Mat): List<Pt>? = detectMaps(gray, null)
+
+    /** Erkennung in einem Foto: rechnet verkleinert (Farbe hilft) und gibt Ecken in Pixeln des Fotos zurück. */
+    fun detect(photo: Bitmap, workLongEdge: Int = 800): List<Pt>? {
         val scale = workLongEdge.toDouble() / max(photo.width, photo.height)
         val small = if (scale < 1) {
             Bitmap.createScaledBitmap(photo, (photo.width * scale).toInt(), (photo.height * scale).toInt(), true)
         } else photo
-        val rgba = Mat()
-        val gray = Mat()
+        val rgba = Mat(); val rgb = Mat(); val gray = Mat()
         try {
             Utils.bitmapToMat(small, rgba)
-            Imgproc.cvtColor(rgba, gray, Imgproc.COLOR_RGBA2GRAY)
+            Imgproc.cvtColor(rgba, rgb, Imgproc.COLOR_RGBA2RGB)
+            Imgproc.cvtColor(rgb, gray, Imgproc.COLOR_RGB2GRAY)
             val f = if (scale < 1) 1 / scale else 1.0
-            return detect(gray)?.map { Pt(it.x * f, it.y * f) }
+            return detectMaps(gray, rgb)?.map { Pt(it.x * f, it.y * f) }
         } finally {
-            rgba.release(); gray.release()
+            rgba.release(); rgb.release(); gray.release()
             if (small !== photo) small.recycle()
         }
+    }
+
+    private fun detectMaps(gray: Mat, rgb: Mat?): List<Pt>? {
+        val w = gray.cols(); val h = gray.rows()
+        val toRelease = ArrayList<Mat>()
+        fun mat() = Mat().also { toRelease += it }
+        try {
+            val blur = mat(); Imgproc.GaussianBlur(gray, blur, Size(5.0, 5.0), 0.0)
+            val med = median(blur)
+            val k5 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(5.0, 5.0)).also { toRelease += it }
+            val k15 = Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(15.0, 15.0)).also { toRelease += it }
+            val maps = ArrayList<Mat>()
+
+            // 1) Kanten im Grau, Schwellen aus dem Bild
+            val e1 = mat(); Imgproc.Canny(blur, e1, max(10.0, 0.4 * med), max(30.0, 1.0 * med))
+            // 2) Kanten in der Sättigung (weißes Papier vor farbigem Grund) – nur mit Farbbild
+            var e2: Mat? = null
+            var hsv: Mat? = null
+            if (rgb != null) {
+                hsv = mat(); Imgproc.cvtColor(rgb, hsv, Imgproc.COLOR_RGB2HSV)
+                val ch = ArrayList<Mat>(); Core.split(hsv, ch); toRelease += ch
+                val sBlur = mat(); Imgproc.GaussianBlur(ch[1], sBlur, Size(5.0, 5.0), 0.0)
+                e2 = mat(); Imgproc.Canny(sBlur, e2, 15.0, 45.0)
+                // 4) Fläche „Papier“: hell und ungesättigt, Schrift-Löcher schließen
+                val paper = mat(); Core.subtract(ch[2], ch[1], paper)
+                Imgproc.GaussianBlur(paper, paper, Size(7.0, 7.0), 0.0)
+                val pm = mat(); Imgproc.threshold(paper, pm, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
+                Imgproc.morphologyEx(pm, pm, Imgproc.MORPH_CLOSE, k15)
+                Imgproc.morphologyEx(
+                    pm, pm, Imgproc.MORPH_OPEN,
+                    Imgproc.getStructuringElement(Imgproc.MORPH_RECT, Size(9.0, 9.0)).also { toRelease += it },
+                )
+                maps += pm
+            }
+            // 3) schwache Kanten: örtlich Kontrast anheben, niedrige Schwellen
+            val soft = mat(); Imgproc.GaussianBlur(gray, soft, Size(7.0, 7.0), 0.0)
+            val cl = mat(); Imgproc.createCLAHE(3.0, Size(8.0, 8.0)).apply(soft, cl)
+            val e3 = mat(); Imgproc.Canny(cl, e3, 12.0, 36.0)
+
+            // Kantenbild für die Bewertung
+            val all = mat(); Core.bitwise_or(e1, e3, all)
+            val e12 = mat()
+            if (e2 != null) { Core.bitwise_or(all, e2, all); Core.bitwise_or(e1, e2, e12) } else e1.copyTo(e12)
+            val edges = mat(); Imgproc.dilate(all, edges, Mat.ones(3, 3, CvType.CV_8UC1).also { toRelease += it })
+            val edgeBytes = ByteArray(w * h).also { edges.get(0, 0, it) }
+
+            val m1 = mat(); Imgproc.morphologyEx(e12, m1, Imgproc.MORPH_CLOSE, k5); maps += m1
+            val m3 = mat(); Imgproc.morphologyEx(e3, m3, Imgproc.MORPH_CLOSE, k5); maps += m3
+            // 5) Otsu im Grau
+            val om = mat(); Imgproc.threshold(blur, om, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
+            Imgproc.morphologyEx(om, om, Imgproc.MORPH_CLOSE, k15); maps += om
+
+            val found = ArrayList<Cand>()
+            var raw = 0
+            var errors = 0
+            for (m in maps) {
+                val contours = ArrayList<MatOfPoint>()
+                val hier = Mat()
+                Imgproc.findContours(m, contours, hier, Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_SIMPLE)
+                hier.release()
+                try {
+                    for (c in contours.sortedByDescending { Imgproc.contourArea(it) }.take(12)) try {
+                        val (q0, hull) = quadFromContour(c) ?: continue
+                        raw++
+                        if (!QuadMath.plausibleCandidate(q0, w, h)) continue
+                        val (q, bend) = refine(q0, hull)
+                        // Seiten müssen gerade sein (Papierkante gerade, Rand eines Lichtflecks rund).
+                        if (bend > MAX_BEND || !QuadMath.plausibleCandidate(q, w, h)) continue
+                        val sides = sideSupport(q, edgeBytes, w, h)
+                        // Dunkler Rand-Streifen (vielleicht Schlagschatten): nur merken, nicht verwerfen.
+                        // Verwerfen ließ bei echtem Lampenlicht oft gar keinen Rahmen übrig.
+                        val dark = runCatching { darkEdgeStrip(gray, q) }.getOrDefault(false)
+                        found += Cand(q, sides.average(), sides.min(), dark)
+                    } catch (e: RuntimeException) {
+                        // Ein missratener Kandidat darf nicht die ganze Erkennung abbrechen.
+                        errors++
+                    }
+                } finally {
+                    contours.forEach { it.release() }
+                }
+            }
+            // Jede Seite muss auf einer echten Kante liegen (gegen erfundene Seiten quer über den Tisch).
+            var good = found.filter { it.mean >= 0.45 && it.min >= MIN_SIDE }
+            lastStats = "Vierecke $raw · passend ${found.size} · gut ${good.size} · dunkler Rand ${good.count { it.darkEdge }}" +
+                if (errors > 0) " · übersprungen $errors" else ""
+            if (good.isEmpty()) return null
+            // Vierecke ohne dunklen Rand bevorzugen; gibt es nur solche mit, trotzdem das beste nehmen.
+            good.filter { !it.darkEdge }.let { if (it.isNotEmpty()) good = it }
+            val imgArea = w.toDouble() * h
+            var best = good.maxBy { it.mean * kotlin.math.sqrt(QuadMath.area(it.quad) / imgArea) }.quad
+            // Faltfeld/Tabelle im Blatt? Dann das umgebende Blatt nehmen – es darf eine schwächere Seite haben,
+            // weil das kräftige innere Viereck es bestätigt.
+            val outer = found
+                .filter { it.mean >= 0.45 && it.min >= MIN_SIDE_OUTER }
+                .map { it.quad }
+                .filter { QuadMath.area(it) > 1.25 * QuadMath.area(best) && QuadMath.inside(best, it) }
+                .filter { !runCatching { darkerRing(gray, best, it) }.getOrDefault(false) }
+            if (outer.isNotEmpty()) best = outer.maxBy { QuadMath.area(it) }
+            // Gefalteter Brief: Felder, die sich eine Knicklinie teilen, zum ganzen Blatt zusammensetzen.
+            val tol = 0.03 * kotlin.math.hypot(w.toDouble(), h.toDouble())
+            repeat(3) {
+                var grown: List<Pt>? = null
+                for (cand in found) {
+                    val u = runCatching { QuadMath.mergeAlongSharedSide(best, cand.quad, tol) }.getOrNull() ?: continue
+                    if (!QuadMath.plausibleCandidate(u, w, h) || QuadMath.area(u) <= 1.1 * QuadMath.area(best)) continue
+                    if (runCatching { darkerRing(gray, best, u) }.getOrDefault(false)) continue
+                    val sides = sideSupport(u, edgeBytes, w, h)
+                    if (sides.average() >= 0.45 && sides.min() >= MIN_SIDE_OUTER &&
+                        (grown == null || QuadMath.area(u) > QuadMath.area(grown!!))
+                    ) grown = u
+                }
+                best = grown ?: return best
+            }
+            return best
+        } finally {
+            toRelease.forEach { it.release() }
+        }
+    }
+
+    /** Viereck aus einer Kontur: konvexe Hülle, dann vereinfachen, bis vier Ecken übrig sind. */
+    private fun quadFromContour(c: MatOfPoint): Pair<List<Pt>, List<Pt>>? {
+        val idx = MatOfInt()
+        Imgproc.convexHull(c, idx)
+        val pts = c.toArray()
+        val hull = idx.toArray().map { pts[it] }
+        idx.release()
+        if (hull.size < 4) return null
+        val hull2f = MatOfPoint2f(*hull.toTypedArray())
+        try {
+            val peri = Imgproc.arcLength(hull2f, true)
+            for (eps in doubleArrayOf(0.01, 0.015, 0.02, 0.03, 0.04, 0.05, 0.065, 0.08)) {
+                val approx = MatOfPoint2f()
+                Imgproc.approxPolyDP(hull2f, approx, eps * peri, true)
+                val a = approx.toArray(); approx.release()
+                if (a.size == 4) return QuadMath.order(a.map { Pt(it.x, it.y) }) to hull.map { Pt(it.x, it.y) }
+                if (a.size < 4) return null
+            }
+            return null
+        } finally {
+            hull2f.release()
+        }
+    }
+
+    private const val MIN_SIDE = 0.3        // jede Seite so weit auf einer Kante
+    private const val MIN_SIDE_OUTER = 0.18 // für das Blatt um ein kräftiges inneres Viereck
+    private const val MAX_BEND = 0.012      // Seiten gerade: Abweichung höchstens 1,2 % der Seitenlänge
+
+    /**
+     * Geraden durch die Konturpunkte jeder Seite (ohne die Eckbereiche), Ecken = Schnittpunkte.
+     * Gibt die Ecken und die größte Krümmung einer Seite (mittlere Abweichung / Seitenlänge) zurück.
+     */
+    private fun refine(q: List<Pt>, hull: List<Pt>): Pair<List<Pt>, Double> {
+        if (hull.size < 8) return q to 0.0
+        val dense = ArrayList<Pt>()
+        for (i in hull.indices) {
+            val a = hull[i]; val b = hull[(i + 1) % hull.size]
+            val n = max(2, (kotlin.math.hypot(b.x - a.x, b.y - a.y) / 3).toInt())
+            for (k in 0 until n) { val t = k.toDouble() / n; dense += Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t) }
+        }
+        val lines = ArrayList<Pair<Pt, Pt>>()
+        var bend = 0.0
+        for (i in 0 until 4) {
+            val a = q[i]; val b = q[(i + 1) % 4]
+            val len = kotlin.math.hypot(b.x - a.x, b.y - a.y)
+            val ux = (b.x - a.x) / len; val uy = (b.y - a.y) / len
+            val sel = dense.filter { p ->
+                val rx = p.x - a.x; val ry = p.y - a.y
+                val t = rx * ux + ry * uy
+                val off = kotlin.math.abs(-uy * rx + ux * ry)
+                t > 0.12 * len && t < 0.88 * len && off < 0.03 * len + 3
+            }
+            if (sel.size < 5) return q to 0.0
+            val m = MatOfPoint2f(*sel.map { Point(it.x, it.y) }.toTypedArray())
+            val line = Mat()
+            Imgproc.fitLine(m, line, Imgproc.DIST_HUBER, 0.0, 0.01, 0.01)
+            val v = FloatArray(4); line.get(0, 0, v)
+            m.release(); line.release()
+            lines += Pt(v[2].toDouble(), v[3].toDouble()) to Pt(v[0].toDouble(), v[1].toDouble())
+            val nx = -v[1].toDouble(); val ny = v[0].toDouble()
+            val rms = kotlin.math.sqrt(sel.sumOf { val d = (it.x - v[2]) * nx + (it.y - v[3]) * ny; d * d } / sel.size)
+            bend = max(bend, rms / len)
+        }
+        val out = (0 until 4).map { i ->
+            val (p1, d1) = lines[(i + 3) % 4]; val (p2, d2) = lines[i]
+            QuadMath.intersect(p1, d1, p2, d2) ?: return q to bend
+        }
+        val r = QuadMath.order(out)
+        // Die Verfeinerung darf nicht weit wegspringen.
+        return (if (QuadMath.maxCornerShift(r, q) > 0.12 * kotlin.math.sqrt(QuadMath.area(q))) q else r) to bend
+    }
+
+    private fun mask(gray: Mat, poly: List<Pt>): Mat {
+        val m = Mat.zeros(gray.size(), CvType.CV_8UC1)
+        val p = MatOfPoint(*poly.map { Point(it.x, it.y) }.toTypedArray())
+        Imgproc.fillConvexPoly(m, p, Scalar(255.0))
+        p.release()
+        return m
+    }
+
+    /** Mittlere Helligkeit unter der Maske; null, wenn die Fläche zu klein ist. */
+    private fun meanIn(gray: Mat, m: Mat, minPixels: Int): Double? =
+        if (Core.countNonZero(m) < minPixels) null else Core.mean(gray, m).`val`[0]
+
+    /**
+     * Ist ein Streifen innen an einer Seite deutlich dunkler als die Mitte (unter 70 %)? Dann gehört ein
+     * Schlagschatten mit zum Viereck, es ist nicht das Blatt allein. Leichtes Abfallen des Lampenlichts
+     * zum Rand (bis etwa 25 %) ist erlaubt.
+     */
+    private fun darkEdgeStrip(gray: Mat, q: List<Pt>, ratio: Double = 0.7): Boolean {
+        val mc = mask(gray, QuadMath.shrink(q, 0.6))
+        val core = meanIn(gray, mc, 50).also { mc.release() } ?: return false
+        for (i in 0 until 4) {
+            val ms = mask(gray, QuadMath.sideStrip(q, i))
+            val strip = meanIn(gray, ms, 30).also { ms.release() } ?: continue
+            if (strip < ratio * core) return true
+        }
+        return false
+    }
+
+    /**
+     * Ist der Streifen zwischen [inner] und [outer] deutlich dunkler als das Innere? Dann ist das größere
+     * Viereck Blatt + Schatten. Bei Tabelle oder Faltfeld im Blatt ist der Streifen gleich hell oder heller.
+     */
+    private fun darkerRing(gray: Mat, inner: List<Pt>, outer: List<Pt>, ratio: Double = 0.8): Boolean {
+        val mi = mask(gray, inner); val mo = mask(gray, outer)
+        val k = Mat.ones(5, 5, CvType.CV_8UC1)
+        val grown = Mat(); Imgproc.dilate(mi, grown, k)
+        val ring = Mat(); Core.subtract(mo, grown, ring)
+        val core = Mat(); Imgproc.erode(mi, core, k)
+        try {
+            val r = meanIn(gray, ring, 50) ?: return false
+            val c = meanIn(gray, core, 50) ?: return false
+            return r < ratio * c
+        } finally {
+            listOf(mi, mo, k, grown, ring, core).forEach { it.release() }
+        }
+    }
+
+    /** Je Seite: Anteil der Prüfpunkte, die auf einer Kante liegen. */
+    private fun sideSupport(q: List<Pt>, edges: ByteArray, w: Int, h: Int): List<Double> =
+        QuadMath.sidePoints(q).map { pts ->
+            pts.count { p ->
+                val x = p.x.toInt(); val y = p.y.toInt()
+                x in 0 until w && y in 0 until h && edges[y * w + x].toInt() != 0
+            }.toDouble() / pts.size
+        }
+
+    /** Median der Helligkeit (für die Kanten-Schwellen). */
+    private fun median(gray: Mat): Double {
+        val bytes = ByteArray((gray.total() * gray.channels()).toInt()).also { gray.get(0, 0, it) }
+        val hist = IntArray(256)
+        for (b in bytes) hist[b.toInt() and 0xFF]++
+        var acc = 0
+        val half = bytes.size / 2
+        for (v in 0 until 256) { acc += hist[v]; if (acc >= half) return v.toDouble() }
+        return 128.0
     }
 
     /**

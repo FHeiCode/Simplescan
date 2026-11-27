@@ -118,3 +118,40 @@ class ForwardTiltTest {
         org.junit.Assert.assertEquals(Math.sqrt(2.0), h.toDouble() / w, 0.01)
     }
 }
+
+class OrderRobustTest {
+    @Test
+    fun duplicatePointsDoNotCrash() {
+        // Zwei Ecken auf demselben Punkt: früher NoSuchElementException → gar kein Rahmen
+        val p = Pt(10.0, 10.0)
+        val r = QuadMath.order(listOf(p, Pt(10.0, 10.0), Pt(90.0, 80.0), Pt(5.0, 70.0)))
+        assertEquals(4, r.size)
+        val same = QuadMath.order(listOf(p, p, p, p))
+        assertEquals(4, same.size)
+    }
+
+    @Test
+    fun rotatedSquareStartsTopLeft() {
+        val r = QuadMath.order(listOf(Pt(50.0, 0.0), Pt(100.0, 50.0), Pt(50.0, 100.0), Pt(0.0, 50.0)))
+        assertEquals(4, r.size)
+        // im Uhrzeigersinn (Bild, y nach unten)
+        assertTrue(QuadMath.isConvex(r))
+    }
+}
+
+class AgreesTest {
+    private val live = listOf(Pt(340.0, 930.0), Pt(822.0, 876.0), Pt(905.0, 1570.0), Pt(195.0, 1535.0))
+
+    @Test
+    fun smallDeviationAgrees() {
+        val photo = live.map { Pt(it.x + 15, it.y - 10) }
+        assertTrue(QuadMath.agrees(photo, live, 1200, 1600))
+    }
+
+    @Test
+    fun skewedIntoReflectionDisagrees() {
+        // Fall vom 27.11.: obere Kante gleich, unten in den Lichtfleck gezogen
+        val photo = listOf(Pt(338.0, 903.0), Pt(820.0, 870.0), Pt(1112.0, 1755.0), Pt(518.0, 1925.0))
+        org.junit.Assert.assertFalse(QuadMath.agrees(photo, live, 1200, 1600))
+    }
+}

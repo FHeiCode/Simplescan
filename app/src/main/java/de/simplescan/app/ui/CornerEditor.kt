@@ -232,7 +232,7 @@ fun CornerEditor(page: ScanPage, openCvReady: Boolean, onApply: (List<Pt>?) -> U
                 val pixels = IntArray(img.width * img.height)
                 img.readPixels(pixels)
                 bmp.setPixels(pixels, 0, img.width, 0, 0, img.width, img.height)
-                runCatching { PageDetector.detect(bmp, 900) ?: PageDetector.detect(bmp, 480) }.getOrNull().also { bmp.recycle() }
+                runCatching { PageDetector.detect(bmp) }.getOrNull().also { bmp.recycle() }
             }
             if (found != null) corners = found
         }

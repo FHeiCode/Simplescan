@@ -180,7 +180,7 @@ fun OwnScannerScreen(onDone: (List<File>) -> Unit, onClose: () -> Unit) {
                     val page = withContext(Dispatchers.Default) {
                         val bmp = loadGalleryImage(context, uri)
                         val quad = if (!openCvReady) null else
-                            runCatching { PageDetector.detect(bmp, 900) ?: PageDetector.detect(bmp, 480) }.getOrNull()
+                            runCatching { PageDetector.detect(bmp) }.getOrNull()
                         val photo = PageRenderer.savePhoto(context, bmp)
                         bmp.recycle()
                         // Galerie: Brennweite unbekannt → typischer Handywert
@@ -349,6 +349,7 @@ private fun CameraArea(
 
     // Live-Ecken in 0..1 des (gedrehten) Analysebilds, dazu dessen Seitenverhältnis.
     var liveQuad by remember { mutableStateOf<List<Pt>?>(null) }
+    var diag by remember { mutableStateOf("") } // VORÜBERGEHEND: Diagnose der Erkennung
     var liveAspect by remember { mutableStateOf(3f / 4f) }
     val lastThumb = pages.lastOrNull()?.thumb
     var lastDetected by remember { mutableStateOf<Boolean?>(null) }
@@ -380,7 +381,10 @@ private fun CameraArea(
                         }
                     } catch (e: Exception) {
                         Log.w("Simplescan", "Erkennung", e)
+                        PageDetector.lastStats = "Fehler: ${e.javaClass.simpleName}: ${e.message?.take(80)}"
                     } finally {
+                        val st = PageDetector.lastStats
+                        ContextCompat.getMainExecutor(context).execute { diag = st }
                         image.close()
                     }
                 }
@@ -443,12 +447,17 @@ private fun CameraArea(
                                     val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
                                     bmp.recycle(); bmp = scaled
                                 }
-                                // Seite im Foto suchen (zwei Größen); sonst den Live-Rahmen nehmen, den man beim Auslösen sah.
+                                // „Was du siehst, wird gescannt“: Seite im Foto suchen (genauer), aber nur übernehmen,
+                                // wenn sie zum grünen Live-Rahmen beim Auslösen passt. Sonst gilt der Live-Rahmen.
+                                // Grund: Die Foto-Suche nutzt auch Farbe und hielt z. B. einen hellen Lichtfleck neben
+                                // einem bräunlichen Heft für Papier, obwohl der Live-Rahmen richtig saß.
                                 val quad = if (!openCvReady) null else
-                                    runCatching { PageDetector.detect(bmp, 900) }.getOrNull()
-                                        ?: runCatching { PageDetector.detect(bmp, 480) }.getOrNull()
-                                        ?: live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
-                                            ?.takeIf { QuadMath.plausible(it, bmp.width, bmp.height) }
+                                    chooseQuad(
+                                        photo = runCatching { PageDetector.detect(bmp) }.getOrNull(),
+                                        live = live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
+                                            ?.takeIf { QuadMath.plausibleCandidate(it, bmp.width, bmp.height) },
+                                        width = bmp.width, height = bmp.height,
+                                    )
                                 Log.i("Simplescan", "Seite: " + (quad?.let { "erkannt" } ?: "nicht erkannt"))
                                 // Originalfoto behalten (für späteres Nachbessern der Ecken), dann Seite berechnen.
                                 val photo = PageRenderer.savePhoto(context, bmp)
@@ -530,6 +539,14 @@ private fun CameraArea(
                     .background(if (liveQuad != null) ScanMint else Color(0x99000000), RoundedCornerShape(50))
                     .padding(horizontal = 14.dp, vertical = 6.dp),
             )
+            // VORÜBERGEHEND: Diagnose-Zeile (Fehlersuche „kein Rahmen“), vor dem Release entfernen
+            if (diag.isNotEmpty()) {
+                Text(
+                    diag, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp, start = 12.dp, end = 12.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             error?.let {
                 Text(
                     it, color = Color.White, textAlign = TextAlign.Center,
@@ -586,6 +603,14 @@ private fun CameraArea(
             }
         }
     }
+}
+
+/** Foto-Ergebnis nur, wenn es zum Live-Rahmen passt (siehe QuadMath.agrees); ohne Live-Rahmen das Foto-Ergebnis. */
+private fun chooseQuad(photo: List<Pt>?, live: List<Pt>?, width: Int, height: Int): List<Pt>? = when {
+    live == null -> photo
+    photo == null -> live
+    QuadMath.agrees(photo, live, width, height) -> photo
+    else -> live
 }
 
 /**

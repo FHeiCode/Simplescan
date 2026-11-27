@@ -17,12 +17,15 @@ object QuadMath {
     /** Sortiert vier Ecken als oben-links, oben-rechts, unten-rechts, unten-links. */
     fun order(points: List<Pt>): List<Pt> {
         require(points.size == 4)
-        val tl = points.minBy { it.x + it.y }
-        val br = points.maxBy { it.x + it.y }
-        val rest = points.filter { it !== tl && it !== br }.let { if (it.size == 2) it else points - setOf(tl, br) }
-        val tr = rest.minBy { it.y - it.x }
-        val bl = rest.maxBy { it.y - it.x }
-        return listOf(tl, tr, br, bl)
+        // Nach dem Winkel um die Mitte sortieren (im Bild, y nach unten: oben-links, oben-rechts, unten-rechts,
+        // unten-links), dann mit der Ecke oben-links beginnen. Funktioniert immer, auch bei doppelten Punkten.
+        // Früher: „points - setOf(tl, br)“ entfernte bei doppelten Punkten zu viel, die Restliste war leer und
+        // die Erkennung brach mit NoSuchElementException ab – es kam gar kein Rahmen.
+        val cx = points.sumOf { it.x } / 4
+        val cy = points.sumOf { it.y } / 4
+        val sorted = points.sortedBy { kotlin.math.atan2(it.y - cy, it.x - cx) }
+        val start = sorted.indices.minBy { sorted[it].x + sorted[it].y }
+        return List(4) { sorted[(start + it) % 4] }
     }
 
     /** Fläche eines Vielecks (Gaußsche Trapezformel). */
@@ -61,6 +64,113 @@ object QuadMath {
         val sides = (0 until 4).map { dist(quad[it], quad[(it + 1) % 4]) }
         return sides.min() > 0.15 * sides.max()
     }
+
+    /**
+     * Strengere Prüfung für Kandidaten der Seitenerkennung: konvex, mindestens [minAreaRatio] des Bildes
+     * (klein genug für Visitenkarten), Seiten nicht extrem ungleich, Innenwinkel 35°–145°, und keine Seite,
+     * die am Bildrand entlangläuft (das ist ein Stück Tisch oder der ganze Ausschnitt, nicht das Blatt).
+     */
+    fun plausibleCandidate(quad: List<Pt>, imageWidth: Int, imageHeight: Int, minAreaRatio: Double = 0.04): Boolean {
+        if (quad.size != 4 || !isConvex(quad)) return false
+        if (area(quad) < minAreaRatio * imageWidth * imageHeight) return false
+        val sides = (0 until 4).map { dist(quad[it], quad[(it + 1) % 4]) }
+        if (sides.min() < 0.12 * sides.max()) return false
+        for (i in 0 until 4) {
+            val a = quad[(i + 3) % 4]; val b = quad[i]; val c = quad[(i + 1) % 4]
+            val v1x = a.x - b.x; val v1y = a.y - b.y; val v2x = c.x - b.x; val v2y = c.y - b.y
+            val cos = (v1x * v2x + v1y * v2y) / (hypot(v1x, v1y) * hypot(v2x, v2y) + 1e-9)
+            if (cos <= -0.82 || cos >= 0.82) return false
+        }
+        val m = 0.015 * max(imageWidth, imageHeight)
+        for (i in 0 until 4) {
+            val a = quad[i]; val b = quad[(i + 1) % 4]
+            if ((a.x < m && b.x < m) || (a.y < m && b.y < m) ||
+                (a.x > imageWidth - m && b.x > imageWidth - m) || (a.y > imageHeight - m && b.y > imageHeight - m)
+            ) return false
+        }
+        return true
+    }
+
+    /**
+     * Gefalteter Brief: Teilen [a] und [b] eine Seite (Knicklinie, beide Ecken höchstens [tol] auseinander),
+     * ergibt sich aus den vier übrigen Ecken das umgebende Viereck. Sonst null.
+     */
+    fun mergeAlongSharedSide(a: List<Pt>, b: List<Pt>, tol: Double): List<Pt>? {
+        for (i in 0 until 4) {
+            val a1 = a[i]; val a2 = a[(i + 1) % 4]
+            for (j in 0 until 4) {
+                val b1 = b[j]; val b2 = b[(j + 1) % 4]
+                val shared = (dist(a1, b2) < tol && dist(a2, b1) < tol) || (dist(a1, b1) < tol && dist(a2, b2) < tol)
+                if (shared) {
+                    val u = order(listOf(a[(i + 2) % 4], a[(i + 3) % 4], b[(j + 2) % 4], b[(j + 3) % 4]))
+                    return if (isConvex(u)) u else null
+                }
+            }
+        }
+        return null
+    }
+
+    /** Liegen alle Ecken von [small] in [big] (konvex, mit Toleranz in Pixeln)? */
+    fun inside(small: List<Pt>, big: List<Pt>, tol: Double = 4.0): Boolean = small.all { p ->
+        // Abstand zu jeder Kante, Vorzeichen nach Umlaufsinn von big
+        val sign = if (signedArea(big) > 0) 1.0 else -1.0
+        (0 until big.size).all { i ->
+            val a = big[i]; val b = big[(i + 1) % big.size]
+            val cross = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x)
+            sign * cross / (dist(a, b) + 1e-9) >= -tol
+        }
+    }
+
+    private fun signedArea(q: List<Pt>): Double {
+        var s = 0.0
+        for (i in q.indices) { val a = q[i]; val b = q[(i + 1) % q.size]; s += a.x * b.y - b.x * a.y }
+        return s / 2
+    }
+
+    /** Prüfpunkte je Seite (ohne die äußersten 5 %), etwa alle [step] Pixel. */
+    fun sidePoints(quad: List<Pt>, step: Double = 4.0): List<List<Pt>> = (0 until 4).map { i ->
+        val a = quad[i]; val b = quad[(i + 1) % 4]
+        val n = max(10, (dist(a, b) / step).toInt())
+        (0 until n).map { k ->
+            val t = 0.05 + 0.9 * k / (n - 1)
+            Pt(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t)
+        }
+    }
+
+    /** Viereck zur eigenen Mitte hin auf [factor] verkleinert (1 = unverändert). */
+    fun shrink(quad: List<Pt>, factor: Double): List<Pt> {
+        val cx = quad.sumOf { it.x } / quad.size
+        val cy = quad.sumOf { it.y } / quad.size
+        return quad.map { Pt(cx + (it.x - cx) * factor, cy + (it.y - cy) * factor) }
+    }
+
+    /** Streifen innen an Seite [i]: zwischen der Seite und dem auf [factor] verkleinerten Viereck. */
+    fun sideStrip(quad: List<Pt>, i: Int, factor: Double = 0.88): List<Pt> {
+        val inner = shrink(quad, factor)
+        val j = (i + 1) % 4
+        return listOf(quad[i], quad[j], inner[j], inner[i])
+    }
+
+    /** Schnittpunkt zweier Geraden (Punkt + Richtung); null, wenn (fast) parallel. */
+    fun intersect(p1: Pt, d1: Pt, p2: Pt, d2: Pt): Pt? {
+        val det = d1.x * (-d2.y) - (-d2.x) * d1.y
+        if (abs(det) < 1e-9) return null
+        val rx = p2.x - p1.x; val ry = p2.y - p1.y
+        val s = (rx * (-d2.y) - (-d2.x) * ry) / det
+        return Pt(p1.x + d1.x * s, p1.y + d1.y * s)
+    }
+
+    /**
+     * Beschreiben zwei Vierecke (in Pixeln eines Bildes) dieselbe Seite? Mittlere Eckabweichung höchstens
+     * [tolerance] der Bilddiagonale (Live-Bild ist kleiner und etwas später, darum nicht zu streng).
+     */
+    fun agrees(a: List<Pt>, b: List<Pt>, width: Int, height: Int, tolerance: Double = 0.04): Boolean {
+        val diag = hypot(width.toDouble(), height.toDouble())
+        return a.zip(b) { p, q -> dist(p, q) }.average() <= tolerance * diag
+    }
+
+    /** Größte Eckverschiebung zwischen zwei Vierecken. */
+    fun maxCornerShift(a: List<Pt>, b: List<Pt>): Double = a.zip(b) { p, q -> dist(p, q) }.max()
 
     /** Breite und Höhe des entzerrten Bildes: jeweils die längere der gegenüberliegenden Kanten. */
     fun outputSize(ordered: List<Pt>): Pair<Int, Int> {

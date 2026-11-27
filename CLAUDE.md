@@ -39,7 +39,7 @@ Ausgangspunkt ist das letzte Release (`gh release view --json tagName`), sonst `
 
 ## Code
 - Schichten: `data/` (Dateinamen `FileNames`, Speichern `PdfStorage`, Einstellungen und Verlauf `SettingsStore` mit DataStore), `ui/` (ViewModel, Screens, Theme).
-- Eigener Scanner (`ui/OwnScannerScreen`, `PagesOverview`, `PagePreview`, `CornerEditor`, `ScanSession`): CameraX für Kamera, OpenCV für Seitenerkennung (`PageDetector`), Entzerren und Filter (`ImageFilters`). Reine Logik in `QuadMath` (Ecken, echtes Seitenverhältnis), `QuadStabilizer`, `AutoCaptureTracker`, `EditGeometry`, `BwCurve`, `PdfPages`; PDF selbst geschrieben (`JpegPdfWriter`). Kein Google-Scanner mehr. Berechtigung CAMERA.
+- Eigener Scanner (`ui/OwnScannerScreen`, `PagesOverview`, `PagePreview`, `CornerEditor`, `ScanSession`): CameraX für Kamera, OpenCV für Seitenerkennung (`PageDetector`), Entzerren und Filter (`ImageFilters`). Reine Logik in `QuadMath` (Ecken, echtes Seitenverhältnis), `QuadStabilizer`, `AutoCaptureTracker`, `EditGeometry`, `BwCurve`, `PdfPages`; PDF selbst geschrieben (`JpegPdfWriter`). Kein Google-Scanner mehr. Berechtigung CAMERA. Änderungen an der Seitenerkennung vorher mit `tools/erkennung-test` (Python-Nachbau mit künstlichen Testfotos) nachmessen.
 - Speichern: Download-Ordner über MediaStore, eigener Ordner über den Ordnerauswahl-Dialog (dauerhafte URI-Freigabe), Nextcloud/WebDAV per OkHttp (`WebDavClient`, Adressen in `WebDavPaths`, Passwort verschlüsselt über `SecretBox`). Keine Speicherberechtigungen; INTERNET nur für WebDAV.
 - Reine Logik in `FileNames`/`ScanListCodec`/`WebDavPaths` mit Tests in `app/src/test`.
 - `CancellationException` immer weiterwerfen; Fehler als verständliche Meldung statt Absturz.
