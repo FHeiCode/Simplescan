@@ -2,12 +2,11 @@
 import cv2, numpy as np
 
 def order(p):
-    p = [tuple(x) for x in p]
-    tl = min(p, key=lambda q: q[0] + q[1]); br = max(p, key=lambda q: q[0] + q[1])
-    rest = [q for q in p if q is not tl and q is not br]
-    if len(rest) != 2: rest = [q for q in p if q != tl and q != br]
-    tr = min(rest, key=lambda q: q[1] - q[0]); bl = max(rest, key=lambda q: q[1] - q[0])
-    return np.array([tl, tr, br, bl], np.float64)
+    """Nach Winkel um die Mitte sortieren, mit oben-links beginnen (robust bei doppelten Punkten, wie QuadMath.order)."""
+    p = np.asarray(p, np.float64).reshape(4, 2); c = p.mean(0)
+    s = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    k = int(np.argmin(s[:, 0] + s[:, 1]))
+    return np.roll(s, -k, axis=0)
 
 def area(q): return abs(cv2.contourArea(q.astype(np.float32)))
 
