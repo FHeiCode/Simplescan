@@ -138,3 +138,20 @@ class OrderRobustTest {
         assertTrue(QuadMath.isConvex(r))
     }
 }
+
+class AgreesTest {
+    private val live = listOf(Pt(340.0, 930.0), Pt(822.0, 876.0), Pt(905.0, 1570.0), Pt(195.0, 1535.0))
+
+    @Test
+    fun smallDeviationAgrees() {
+        val photo = live.map { Pt(it.x + 15, it.y - 10) }
+        assertTrue(QuadMath.agrees(photo, live, 1200, 1600))
+    }
+
+    @Test
+    fun skewedIntoReflectionDisagrees() {
+        // Fall vom 27.11.: obere Kante gleich, unten in den Lichtfleck gezogen
+        val photo = listOf(Pt(338.0, 903.0), Pt(820.0, 870.0), Pt(1112.0, 1755.0), Pt(518.0, 1925.0))
+        org.junit.Assert.assertFalse(QuadMath.agrees(photo, live, 1200, 1600))
+    }
+}

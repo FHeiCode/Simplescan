@@ -447,11 +447,17 @@ private fun CameraArea(
                                     val scaled = Bitmap.createScaledBitmap(bmp, (bmp.width * f).toInt(), (bmp.height * f).toInt(), true)
                                     bmp.recycle(); bmp = scaled
                                 }
-                                // Seite im Foto suchen; sonst den Live-Rahmen nehmen, den man beim Auslösen sah.
+                                // „Was du siehst, wird gescannt“: Seite im Foto suchen (genauer), aber nur übernehmen,
+                                // wenn sie zum grünen Live-Rahmen beim Auslösen passt. Sonst gilt der Live-Rahmen.
+                                // Grund: Die Foto-Suche nutzt auch Farbe und hielt z. B. einen hellen Lichtfleck neben
+                                // einem bräunlichen Heft für Papier, obwohl der Live-Rahmen richtig saß.
                                 val quad = if (!openCvReady) null else
-                                    runCatching { PageDetector.detect(bmp) }.getOrNull()
-                                        ?: live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
-                                            ?.takeIf { QuadMath.plausibleCandidate(it, bmp.width, bmp.height) }
+                                    chooseQuad(
+                                        photo = runCatching { PageDetector.detect(bmp) }.getOrNull(),
+                                        live = live?.let { q -> QuadMath.order(q.map { Pt(it.x * bmp.width, it.y * bmp.height) }) }
+                                            ?.takeIf { QuadMath.plausibleCandidate(it, bmp.width, bmp.height) },
+                                        width = bmp.width, height = bmp.height,
+                                    )
                                 Log.i("Simplescan", "Seite: " + (quad?.let { "erkannt" } ?: "nicht erkannt"))
                                 // Originalfoto behalten (für späteres Nachbessern der Ecken), dann Seite berechnen.
                                 val photo = PageRenderer.savePhoto(context, bmp)
@@ -597,6 +603,14 @@ private fun CameraArea(
             }
         }
     }
+}
+
+/** Foto-Ergebnis nur, wenn es zum Live-Rahmen passt (siehe QuadMath.agrees); ohne Live-Rahmen das Foto-Ergebnis. */
+private fun chooseQuad(photo: List<Pt>?, live: List<Pt>?, width: Int, height: Int): List<Pt>? = when {
+    live == null -> photo
+    photo == null -> live
+    QuadMath.agrees(photo, live, width, height) -> photo
+    else -> live
 }
 
 /**

@@ -160,6 +160,15 @@ object QuadMath {
         return Pt(p1.x + d1.x * s, p1.y + d1.y * s)
     }
 
+    /**
+     * Beschreiben zwei Vierecke (in Pixeln eines Bildes) dieselbe Seite? Mittlere Eckabweichung höchstens
+     * [tolerance] der Bilddiagonale (Live-Bild ist kleiner und etwas später, darum nicht zu streng).
+     */
+    fun agrees(a: List<Pt>, b: List<Pt>, width: Int, height: Int, tolerance: Double = 0.04): Boolean {
+        val diag = hypot(width.toDouble(), height.toDouble())
+        return a.zip(b) { p, q -> dist(p, q) }.average() <= tolerance * diag
+    }
+
     /** Größte Eckverschiebung zwischen zwei Vierecken. */
     fun maxCornerShift(a: List<Pt>, b: List<Pt>): Double = a.zip(b) { p, q -> dist(p, q) }.max()
 
