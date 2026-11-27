@@ -349,6 +349,7 @@ private fun CameraArea(
 
     // Live-Ecken in 0..1 des (gedrehten) Analysebilds, dazu dessen Seitenverhältnis.
     var liveQuad by remember { mutableStateOf<List<Pt>?>(null) }
+    var diag by remember { mutableStateOf("") } // VORÜBERGEHEND: Diagnose der Erkennung
     var liveAspect by remember { mutableStateOf(3f / 4f) }
     val lastThumb = pages.lastOrNull()?.thumb
     var lastDetected by remember { mutableStateOf<Boolean?>(null) }
@@ -380,7 +381,10 @@ private fun CameraArea(
                         }
                     } catch (e: Exception) {
                         Log.w("Simplescan", "Erkennung", e)
+                        PageDetector.lastStats = "Fehler: ${e.javaClass.simpleName}: ${e.message?.take(80)}"
                     } finally {
+                        val st = PageDetector.lastStats
+                        ContextCompat.getMainExecutor(context).execute { diag = st }
                         image.close()
                     }
                 }
@@ -529,6 +533,14 @@ private fun CameraArea(
                     .background(if (liveQuad != null) ScanMint else Color(0x99000000), RoundedCornerShape(50))
                     .padding(horizontal = 14.dp, vertical = 6.dp),
             )
+            // VORÜBERGEHEND: Diagnose-Zeile (Fehlersuche „kein Rahmen“), vor dem Release entfernen
+            if (diag.isNotEmpty()) {
+                Text(
+                    diag, color = Color.White, fontSize = 11.sp, textAlign = TextAlign.Center,
+                    modifier = Modifier.align(Alignment.TopCenter).padding(top = 52.dp, start = 12.dp, end = 12.dp)
+                        .background(Color(0x99000000), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             error?.let {
                 Text(
                     it, color = Color.White, textAlign = TextAlign.Center,

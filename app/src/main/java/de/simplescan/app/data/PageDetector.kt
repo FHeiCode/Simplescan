@@ -24,12 +24,21 @@ import kotlin.math.max
  * Viereck in einem größeren, das ebenfalls passt (Tabelle/Kasten im Blatt), gewinnt das größere.
  *
  * Dazu: keine Seite am Bildrand, jede Seite einzeln auf einer Kante, gerade Seiten, Faltfelder zusammensetzen,
- * kein Schlagschatten im Viereck (Rand-Streifen nicht deutlich dunkler als die Mitte).
+ * Vierecke ohne dunklen Rand-Streifen (Schlagschatten) bevorzugen – aber nie deswegen ganz verwerfen.
  *
  * Gemessen an künstlichen Testfotos mit Fingern, Eselsohren, Faltungen, Lichtflecken und Schlagschatten
  * (tools/erkennung-test, 280 Fotos): Foto 237 richtig (bis 2.2: 70), live in Graustufen 214.
  */
 object PageDetector {
+
+    /**
+     * VORÜBERGEHEND (Fehlersuche „kein Rahmen“): kurze Statistik der letzten Erkennung für die Anzeige in der
+     * Kamera-Ansicht. Vor dem Release wieder entfernen.
+     */
+    @Volatile
+    var lastStats: String = ""
+
+    private class Cand(val quad: List<Pt>, val mean: Double, val min: Double, val darkEdge: Boolean)
 
     /** Live-Erkennung in einem kleinen Graustufenbild (Y-Ebene der Kamera). Ecken in Pixeln dieses Bildes. */
     fun detect(gray: Mat): List<Pt>? = detectMaps(gray, null)
@@ -103,8 +112,8 @@ object PageDetector {
             val om = mat(); Imgproc.threshold(blur, om, 0.0, 255.0, Imgproc.THRESH_BINARY + Imgproc.THRESH_OTSU)
             Imgproc.morphologyEx(om, om, Imgproc.MORPH_CLOSE, k15); maps += om
 
-            // Kandidaten: Viereck, mittlere Kantentreue, schwächste Seite
-            val found = ArrayList<Triple<List<Pt>, Double, Double>>()
+            val found = ArrayList<Cand>()
+            var raw = 0
             for (m in maps) {
                 val contours = ArrayList<MatOfPoint>()
                 val hier = Mat()
@@ -113,40 +122,45 @@ object PageDetector {
                 try {
                     for (c in contours.sortedByDescending { Imgproc.contourArea(it) }.take(12)) {
                         val (q0, hull) = quadFromContour(c) ?: continue
+                        raw++
                         if (!QuadMath.plausibleCandidate(q0, w, h)) continue
                         val (q, bend) = refine(q0, hull)
                         // Seiten müssen gerade sein (Papierkante gerade, Rand eines Lichtflecks rund).
                         if (bend > MAX_BEND || !QuadMath.plausibleCandidate(q, w, h)) continue
-                        // Schatten mit im Viereck? (Blatt + Schlagschatten ergibt ein sauberes Viereck)
-                        if (darkEdgeStrip(gray, q)) continue
                         val sides = sideSupport(q, edgeBytes, w, h)
-                        found += Triple(q, sides.average(), sides.min())
+                        // Dunkler Rand-Streifen (vielleicht Schlagschatten): nur merken, nicht verwerfen.
+                        // Verwerfen ließ bei echtem Lampenlicht oft gar keinen Rahmen übrig.
+                        val dark = runCatching { darkEdgeStrip(gray, q) }.getOrDefault(false)
+                        found += Cand(q, sides.average(), sides.min(), dark)
                     }
                 } finally {
                     contours.forEach { it.release() }
                 }
             }
             // Jede Seite muss auf einer echten Kante liegen (gegen erfundene Seiten quer über den Tisch).
-            val good = found.filter { it.second >= 0.45 && it.third >= MIN_SIDE }
+            var good = found.filter { it.mean >= 0.45 && it.min >= MIN_SIDE }
+            lastStats = "Vierecke ${raw} · passend ${found.size} · gut ${good.size} · mit dunklem Rand ${good.count { it.darkEdge }}"
             if (good.isEmpty()) return null
+            // Vierecke ohne dunklen Rand bevorzugen; gibt es nur solche mit, trotzdem das beste nehmen.
+            good.filter { !it.darkEdge }.let { if (it.isNotEmpty()) good = it }
             val imgArea = w.toDouble() * h
-            var best = good.maxBy { it.second * kotlin.math.sqrt(QuadMath.area(it.first) / imgArea) }.first
+            var best = good.maxBy { it.mean * kotlin.math.sqrt(QuadMath.area(it.quad) / imgArea) }.quad
             // Faltfeld/Tabelle im Blatt? Dann das umgebende Blatt nehmen – es darf eine schwächere Seite haben,
             // weil das kräftige innere Viereck es bestätigt.
             val outer = found
-                .filter { it.second >= 0.45 && it.third >= MIN_SIDE_OUTER }
-                .map { it.first }
+                .filter { it.mean >= 0.45 && it.min >= MIN_SIDE_OUTER }
+                .map { it.quad }
                 .filter { QuadMath.area(it) > 1.25 * QuadMath.area(best) && QuadMath.inside(best, it) }
-                .filter { !darkerRing(gray, best, it) }
+                .filter { !runCatching { darkerRing(gray, best, it) }.getOrDefault(false) }
             if (outer.isNotEmpty()) best = outer.maxBy { QuadMath.area(it) }
             // Gefalteter Brief: Felder, die sich eine Knicklinie teilen, zum ganzen Blatt zusammensetzen.
             val tol = 0.03 * kotlin.math.hypot(w.toDouble(), h.toDouble())
             repeat(3) {
                 var grown: List<Pt>? = null
-                for ((q, _, _) in found) {
-                    val u = QuadMath.mergeAlongSharedSide(best, q, tol) ?: continue
+                for (cand in found) {
+                    val u = QuadMath.mergeAlongSharedSide(best, cand.quad, tol) ?: continue
                     if (!QuadMath.plausibleCandidate(u, w, h) || QuadMath.area(u) <= 1.1 * QuadMath.area(best)) continue
-                    if (darkerRing(gray, best, u)) continue
+                    if (runCatching { darkerRing(gray, best, u) }.getOrDefault(false)) continue
                     val sides = sideSupport(u, edgeBytes, w, h)
                     if (sides.average() >= 0.45 && sides.min() >= MIN_SIDE_OUTER &&
                         (grown == null || QuadMath.area(u) > QuadMath.area(grown!!))

@@ -124,14 +124,17 @@ def detect_bgr(small):
             if q is None or not plausible(q, w, h): continue
             q, bend = refine(q, hull)
             if bend > MAX_BEND or not plausible(q, w, h): continue
-            if dark_edge_strip(gray, q): continue
             ss = side_support(q, edges)
-            found.append((q, float(np.mean(ss)), min(ss)))
+            # Dunkler Rand-Streifen (vielleicht Schatten): nur merken, nicht verwerfen
+            found.append((q, float(np.mean(ss)), min(ss), dark_edge_strip(gray, q)))
     good = [t for t in found if t[1] >= 0.45 and t[2] >= MIN_SIDE]
     if not good: return None
+    # Vierecke ohne dunklen Rand-Streifen bevorzugen; gibt es nur solche mit, trotzdem das beste nehmen
+    clean = [t for t in good if not t[3]]
+    if clean: good = clean
     best = max(good, key=lambda t: t[1] * np.sqrt(area(t[0]) / (w * h)))[0]
     # Liegt das beste Viereck in einem größeren, das auch passt (Faltfeld/Tabelle im Blatt)? Dann das Blatt nehmen.
-    outer = [q for q, mean, mn in found
+    outer = [q for q, mean, mn, _d in found
              if mean >= 0.45 and mn >= MIN_SIDE_OUTER and area(q) > 1.25 * area(best) and inside(best, q)
              and not darker_ring(gray, best, q)]
     if outer: best = max(outer, key=area)
@@ -139,7 +142,7 @@ def detect_bgr(small):
     tol = 0.03 * np.hypot(w, h)
     for _ in range(3):
         grown = None
-        for q, _m, _n in found:
+        for q, _m, _n, _d in found:
             u = merge(best, q, tol)
             if u is None or not plausible(u, w, h) or area(u) <= 1.1 * area(best): continue
             if darker_ring(gray, best, u): continue
